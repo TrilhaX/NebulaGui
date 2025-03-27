@@ -1,201 +1,69 @@
---[[
-    Modern UI Library v1.0
-    Recursos incluídos:
-    - Theme System
-    - Botões estilizados
-    - Modais
-    - Sliders
-    - Toggles
-    - Notificações
-    - Navigation Bar
---]]
+local UILibrary = {}
 
-local UILib = {}
-
--- Serviços necessários
-local TweenService = game:GetService("TweenService")
-local UserInputService = game:GetService("UserInputService")
-
--- Configuração do tema
-UILib.Theme = {
-    Primary = Color3.fromRGB(0, 170, 255),
-    Secondary = Color3.fromRGB(245, 245, 245),
-    TextColor = Color3.fromRGB(255, 255, 255),
-    DarkText = Color3.fromRGB(50, 50, 50),
-    Success = Color3.fromRGB(85, 170, 127),
-    Danger = Color3.fromRGB(255, 95, 87),
-    BorderRadius = UDim.new(0, 8),
-    Font = Enum.Font.GothamMedium
-}
-
--- Função para criar elementos básicos
-function UILib:CreateElement(elementType, properties)
-    local element = Instance.new(elementType)
-    for prop, value in pairs(properties) do
-        element[prop] = value
+function UILibrary:CreateWindow(config)
+    local ScreenGui = Instance.new("ScreenGui")
+    ScreenGui.Parent = game.Players.LocalPlayer:WaitForChild("PlayerGui")
+    
+    local Frame = Instance.new("Frame")
+    Frame.Size = config.Size or UDim2.new(0, 400, 0, 300)
+    Frame.Position = config.Position or UDim2.new(0.5, -200, 0.5, -150)
+    Frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    Frame.Visible = config.Visible or true
+    Frame.Parent = ScreenGui
+    
+    local Title = Instance.new("TextLabel")
+    Title.Size = UDim2.new(1, 0, 0, 30)
+    Title.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+    Title.Text = config.Title or "UI Library"
+    Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Title.Parent = Frame
+    
+    if config.UserInfo then
+        local player = game.Players.LocalPlayer
+        local Avatar = Instance.new("ImageLabel")
+        Avatar.Size = UDim2.new(0, 80, 0, 80)
+        Avatar.Position = UDim2.new(1, -90, 0, 10)
+        Avatar.Image = "https://www.roblox.com/headshot-thumbnail/image?userId=" .. player.UserId .. "&width=100&height=100&format=png"
+        Avatar.Parent = Frame
+        
+        local UserName = Instance.new("TextLabel")
+        UserName.Size = UDim2.new(0, 100, 0, 20)
+        UserName.Position = UDim2.new(1, -110, 0, 100)
+        UserName.Text = player.Name
+        UserName.TextColor3 = Color3.fromRGB(255, 255, 255)
+        UserName.BackgroundTransparency = 1
+        UserName.Parent = Frame
     end
-    return element
+    
+    return Frame
 end
 
--- Componente: Botão Moderno
-function UILib:CreateButton(options)
-    local button = self:CreateElement("TextButton", {
-        Size = options.Size or UDim2.new(0, 200, 0, 40),
-        BackgroundColor3 = self.Theme.Primary,
-        Font = self.Theme.Font,
-        TextColor3 = self.Theme.TextColor,
-        Text = options.Text or "Button",
-        AutoButtonColor = false,
-        Parent = options.Parent
-    })
-
-    local corner = self:CreateElement("UICorner", {
-        CornerRadius = self.Theme.BorderRadius,
-        Parent = button
-    })
-
-    local padding = self:CreateElement("UIPadding", {
-        PaddingLeft = UDim.new(0, 15),
-        PaddingRight = UDim.new(0, 15),
-        Parent = button
-    })
-
-    -- Efeitos de hover
-    button.MouseEnter:Connect(function()
-        TweenService:Create(button, TweenInfo.new(0.2), {BackgroundColor3 = self.Theme.Primary:Lerp(Color3.new(1,1,1), 0.1)}):Play()
+function UILibrary:CreateButton(parent, text, callback)
+    local Button = Instance.new("TextButton")
+    Button.Size = UDim2.new(1, -10, 0, 30)
+    Button.Position = UDim2.new(0, 5, 0, 40)
+    Button.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    Button.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Button.Text = text or "Button"
+    Button.Parent = parent
+    
+    Button.MouseButton1Click:Connect(function()
+        if callback then callback() end
     end)
-
-    button.MouseLeave:Connect(function()
-        TweenService:Create(button, TweenInfo.new(0.2), {BackgroundColor3 = self.Theme.Primary}):Play()
-    end)
-
-    -- Efeito de clique
-    button.MouseButton1Down:Connect(function()
-        TweenService:Create(button, TweenInfo.new(0.1), {Position = UDim2.new(0.5, 0, 0.5, 2)}):Play()
-    end)
-
-    button.MouseButton1Up:Connect(function()
-        TweenService:Create(button, TweenInfo.new(0.1), {Position = UDim2.new(0.5, 0, 0.5, 0)}):Play()
-    end)
-
-    return button
+    
+    return Button
 end
 
--- Componente: Modal
-function UILib:CreateModal(options)
-    local modalOverlay = self:CreateElement("Frame", {
-        Size = UDim2.new(1, 0, 1, 0),
-        BackgroundColor3 = Color3.new(0, 0, 0),
-        BackgroundTransparency = 0.5,
-        Parent = options.Parent
-    })
-
-    local modalFrame = self:CreateElement("Frame", {
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.new(0.5, 0, 0.5, 0),
-        Size = UDim2.new(0, 400, 0, 250),
-        BackgroundColor3 = self.Theme.Secondary,
-        Parent = modalOverlay
-    })
-
-    -- Adicionar conteúdo ao modal
-    -- ... (adicionar título, texto e botões)
-
-    return modalOverlay
+function UILibrary:CreateLabel(parent, text)
+    local Label = Instance.new("TextLabel")
+    Label.Size = UDim2.new(1, -10, 0, 30)
+    Label.Position = UDim2.new(0, 5, 0, 80)
+    Label.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    Label.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Label.Text = text or "Label"
+    Label.Parent = parent
+    
+    return Label
 end
 
--- Componente: Slider
-function UILib:CreateSlider(options)
-    local sliderContainer = self:CreateElement("Frame", {
-        Size = UDim2.new(0, 300, 0, 50),
-        BackgroundTransparency = 1,
-        Parent = options.Parent
-    })
-
-    local sliderTrack = self:CreateElement("TextButton", {
-        Size = UDim2.new(1, 0, 0, 4),
-        Position = UDim2.new(0, 0, 0.5, 0),
-        BackgroundColor3 = Color3.fromRGB(200, 200, 200),
-        AutoButtonColor = false,
-        Parent = sliderContainer
-    })
-
-    local sliderFill = self:CreateElement("Frame", {
-        Size = UDim2.new(0, 0, 1, 0),
-        BackgroundColor3 = self.Theme.Primary,
-        Parent = sliderTrack
-    })
-
-    local sliderThumb = self:CreateElement("TextButton", {
-        Size = UDim2.new(0, 20, 0, 20),
-        Position = UDim2.new(0, 0, 0.5, -10),
-        BackgroundColor3 = self.Theme.Primary,
-        Parent = sliderContainer
-    })
-
-    -- Lógica do slider
-    local isDragging = false
-    -- ... (adicionar lógica de arrasto)
-
-    return sliderContainer
-end
-
--- Componente: Notification
-function UILib:ShowNotification(options)
-    local notification = self:CreateElement("Frame", {
-        Size = UDim2.new(0.3, 0, 0, 50),
-        Position = UDim2.new(0.5, 0, 0, -50),
-        AnchorPoint = Vector2.new(0.5, 0),
-        BackgroundColor3 = self.Theme.Secondary,
-        Parent = options.Parent
-    })
-
-    -- Animação de entrada
-    TweenService:Create(notification, TweenInfo.new(0.5, Enum.EasingStyle.Quad), {
-        Position = UDim2.new(0.5, 0, 0, 20)
-    }):Play()
-
-    -- Auto-fechar após 5 segundos
-    task.delay(5, function()
-        TweenService:Create(notification, TweenInfo.new(0.5), {
-            Position = UDim2.new(0.5, 0, 0, -50)
-        }):Play()
-        task.wait(0.5)
-        notification:Destroy()
-    end)
-
-    return notification
-end
-
--- Componente: Navigation Bar
-function UILib:CreateNavBar(options)
-    local navBar = self:CreateElement("Frame", {
-        Size = UDim2.new(1, 0, 0, 50),
-        Position = UDim2.new(0, 0, 0, 0),
-        BackgroundColor3 = self.Theme.Primary,
-        Parent = options.Parent
-    })
-
-    local layout = self:CreateElement("UIListLayout", {
-        FillDirection = Enum.FillDirection.Horizontal,
-        HorizontalAlignment = Enum.HorizontalAlignment.Center,
-        VerticalAlignment = Enum.VerticalAlignment.Center,
-        SortOrder = Enum.SortOrder.LayoutOrder,
-        Padding = UDim.new(0, 20),
-        Parent = navBar
-    })
-
-    -- Adicionar itens
-    for _, item in pairs(options.Items) do
-        local navButton = self:CreateButton({
-            Text = item.Text,
-            Parent = navBar,
-            Size = UDim2.new(0, 100, 0, 30)
-        })
-        navButton.MouseButton1Click:Connect(item.Callback)
-    end
-
-    return navBar
-end
-
-return UILib
+return UILibrary
