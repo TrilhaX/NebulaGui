@@ -1,27 +1,22 @@
 # Modern UI Library for Roblox
 
-Uma biblioteca de interface de usuário moderna e elegante para jogos Roblox, com componentes pré-estilizados e personalizáveis.
+A modern and sleek user interface library for Roblox games, with pre-styled and customizable components.
 
-![Preview](https://i.imgur.com/example.png) *(substitua por uma imagem real da sua UI)*
+![Preview](https://i.imgur.com/example.png)
 
-## Recursos Principais
+## Key Features
 
-- ✅ Sistema de temas centralizado
-- 🎨 Componentes estilizados com efeitos visuais
-- 🚀 Fácil integração em qualquer projeto
-- 📱 Design responsivo
-- 🎚️ Componentes interativos:
-  - Botões modernos
-  - Modais elegantes
-  - Sliders suaves
-  - Sistema de notificações
-  - Barra de navegação
+- ✅ **Centralized theme system**: Easily customize the look and feel of your game.
+- 🎨 **Styled components with visual effects**: Add sophistication and smoothness to your UI.
+- 🚀 **Easy integration into any project**: Simply import and start using.
+- 📱 **Responsive design**: Adapts perfectly to different screen resolutions and devices.
+- 🎚️ **Interactive components**:
+  - **Modern buttons**: Elegant and interactive buttons.
+  - **Elegant modals**: Dialog boxes with smooth animations.
+  - **Smooth sliders**: Intuitive sliders for value adjustments.
+  - **Notification system**: Pop-up notifications with animations.
+  - **Navigation bar**: Simple and efficient navigation.
 
-## Instalação
+## How To Use
 
-1. Baixe o arquivo `UILib.lua` deste repositório
-2. Coloque-o em um LocalScript dentro de um ModuleScript no ReplicatedStorage
-3. Requira o módulo em seus scripts:
-
-```lua
-local UILib = require(game:GetService("ReplicatedStorage"):WaitForChild("UILib"))
+* Coming Soon
