@@ -1,5 +1,6 @@
 local UILibrary = {}
 local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
 
 --------------------------------------------------
 -- Cria a janela principal com configurações customizadas.
@@ -29,7 +30,7 @@ function UILibrary:CreateWindow(config)
     end
     window.Parent = screenGui
 
-    -- Título da janela.
+    -- Título da janela (será a área de arrasto).
     local titleLabel = Instance.new("TextLabel")
     titleLabel.Size = UDim2.new(1, 0, 0, 30)
     titleLabel.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
@@ -38,6 +39,68 @@ function UILibrary:CreateWindow(config)
     titleLabel.Font = Enum.Font.SourceSans
     titleLabel.TextSize = 20
     titleLabel.Parent = window
+
+    -- Adicionando a funcionalidade de arrastar
+    local dragSpeed = 1 -- Ajuste a sensibilidade do arrasto
+    local isDragging = false
+    local dragStartPos
+    local windowStartPos
+
+    -- Função para atualizar a posição durante o arrasto
+    local function updateDrag(input)
+        if not isDragging then return end
+        
+        local delta = input.Position - dragStartPos
+        local newX = windowStartPos.X.Offset + (delta.X * dragSpeed)
+        local newY = windowStartPos.Y.Offset + (delta.Y * dragSpeed)
+        
+        -- Limites da tela
+        local viewportSize = workspace.CurrentCamera.ViewportSize
+        local windowSize = window.AbsoluteSize
+        
+        -- Calcular limites máximos
+        local minX = -windowSize.X/2
+        local maxX = viewportSize.X - windowSize.X/2
+        local minY = -windowSize.Y/2
+        local maxY = viewportSize.Y - windowSize.Y/2
+        
+        newX = math.clamp(newX, minX, maxX)
+        newY = math.clamp(newY, minY, maxY)
+        
+        window.Position = UDim2.new(
+            0, newX,
+            0, newY
+        )
+    end
+
+    -- Conectar eventos de arrasto ao título da janela
+    titleLabel.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            isDragging = true
+            dragStartPos = input.Position
+            windowStartPos = window.Position
+            
+            -- Conectar o evento de movimento
+            local moveConnection = RunService.RenderStepped:Connect(function()
+                if isDragging then
+                    local input = UserInputService:GetLastInputForMovement()
+                    if input then
+                        updateDrag(input)
+                    end
+                end
+            end)
+            
+            -- Quando soltar o botão
+            local releaseConnection
+            releaseConnection = input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    isDragging = false
+                    moveConnection:Disconnect()
+                    releaseConnection:Disconnect()
+                end
+            end)
+        end
+    end)
 
     -- Exibe informações do usuário, se habilitado.
     if config.UserInfo then
