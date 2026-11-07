@@ -23,12 +23,13 @@ local Nebula = { Version = "0.1.0", Windows = {} }
 
 -- image icons (Creator Store assets, loaded through rbxthumb so decal ids work too).
 -- any kind not listed here is drawn with frames. Override with Nebula:Window({ Icons = { gear = "rbxassetid://..." } })
-local function thumb(id) return "rbxthumb://type=Asset&id=" .. id .. "&w=150&h=150" end
+-- each icon tries these sources in order; if none loads, the drawn version stays
+local function src(id) return { "rbxassetid://" .. id, "rbxthumb://type=Asset&id=" .. id .. "&w=150&h=150" } end
 Nebula.Icons = {
-	gear = thumb(130522520017662),
-	eye = thumb(6523858422),
-	eyeoff = thumb(133178224707634),
-	globe = thumb(11395780614),
+	gear = src(130522520017662),
+	eye = src(6523858422),
+	eyeoff = src(133178224707634),
+	globe = src(11395780614),
 }
 local T = {} -- theme
 local F = {} -- fonts
@@ -397,21 +398,36 @@ do
 		end
 	end
 
+	-- resolves an image icon once per kind: first source that actually loads wins
+	local iconState = {}
+	function U.resolveIcon(kind, cb)
+		local st = iconState[kind]
+		if st and st.done then return cb(st.url) end
+		if st then return table.insert(st.waiters, cb) end
+		st = { waiters = { cb } }
+		iconState[kind] = st
+		task.spawn(function()
+			local list = Nebula.Icons[kind]
+			if type(list) == "string" then list = { list } end
+			local found
+			for _, url in ipairs(list or {}) do
+				local status
+				pcall(function()
+					Svc.ContentProvider:PreloadAsync({ url }, function(_, s) status = s end)
+				end)
+				-- status nil = PreloadAsync unavailable in this executor: trust the first source
+				if status == nil or status == Enum.AssetFetchStatus.Success then
+					found = url
+					break
+				end
+			end
+			st.done, st.url = true, found
+			for _, w in ipairs(st.waiters) do pcall(w, found) end
+			st.waiters = nil
+		end)
+	end
+
 	function U.icon(kind, parent, size, color, props)
-		local image = Nebula.Icons[kind]
-		if image then
-			local img = U.new("ImageLabel", {
-				Parent = parent,
-				Name = "Icon",
-				BackgroundTransparency = 1,
-				Image = image,
-				ImageColor3 = color or T.Text,
-				ScaleType = Enum.ScaleType.Fit,
-				Size = UDim2.fromOffset(size, size),
-			})
-			for k, v in pairs(props or {}) do img[k] = v end
-			return img
-		end
 		local h = U.new("Frame", {
 			Parent = parent,
 			Name = "Icon",
@@ -419,17 +435,34 @@ do
 			Size = UDim2.fromOffset(size, size),
 		})
 		for k, v in pairs(props or {}) do h[k] = v end
+		-- drawn version shows immediately; swapped for the image once it loads
+		local drawn = U.new("Frame", { Parent = h, Name = "Drawn", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1) })
 		local b = builders[kind]
-		if b then b(h, color or T.Text) end
+		if b then b(drawn, color or T.Text) end
+		if Nebula.Icons[kind] then
+			local img = U.new("ImageLabel", {
+				Parent = h,
+				Name = "Image",
+				BackgroundTransparency = 1,
+				ImageColor3 = color or T.Text,
+				ScaleType = Enum.ScaleType.Fit,
+				Size = UDim2.fromScale(1, 1),
+				Visible = false,
+			})
+			U.resolveIcon(kind, function(url)
+				if url and img.Parent then
+					img.Image = url
+					img.Visible = true
+					drawn.Visible = false
+				end
+			end)
+		end
 		return h
 	end
 
 	function U.iconColor(h, color)
-		if h:IsA("ImageLabel") then
-			h.ImageColor3 = color
-			return
-		end
 		for _, d in ipairs(h:GetDescendants()) do
+			if d:IsA("ImageLabel") then d.ImageColor3 = color end
 			if d:IsA("Frame") and d.BackgroundTransparency < 1 then d.BackgroundColor3 = color end
 			if d:IsA("UIStroke") then d.Color = color end
 		end
