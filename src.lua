@@ -1164,7 +1164,10 @@ function Window:_BuildSearch()
 		self:_LayoutHeader()
 		box:CaptureFocus()
 	end)
-	box.Focused:Connect(function() st.Color = T.Accent end)
+	box.Focused:Connect(function()
+		st.Color = T.Accent
+		if self._openPanel and self._openPanel.Inside then self:ClosePanel() end
+	end)
 	box.FocusLost:Connect(function()
 		st.Color = T.Border
 		task.delay(0.2, function()
@@ -1599,7 +1602,7 @@ function Window:_OpenPopup(anchor, width, height)
 	self:_ClosePopup()
 	local ov = self.Overlay
 	local catcher = U.button({ Parent = ov, Size = UDim2.fromScale(1, 1), ZIndex = 1 })
-	local pop = U.new("CanvasGroup", { Parent = ov, BackgroundColor3 = T.Surface, ZIndex = 2 })
+	local pop = U.new("CanvasGroup", { Parent = ov, BackgroundColor3 = T.Surface, ZIndex = 2, Active = true })
 	U.corner(pop, 10)
 	U.stroke(pop, T.BorderHi)
 	local s = self:_S()
@@ -1691,6 +1694,7 @@ function Window:_Search(q)
 	local h = math.max(1, #found) * 38 + 8
 	local pop = U.new("Frame", {
 		Parent = ov,
+		Active = true,
 		BackgroundColor3 = T.Surface,
 		ZIndex = 3,
 		Position = UDim2.fromOffset(math.clamp(rel.X + ssz.X - w, 8, math.max(8, ov.AbsoluteSize.X / s - w - 8)), rel.Y + ssz.Y + 6),
@@ -3196,7 +3200,7 @@ function U.gearButton(w, parent, o)
 end
 
 function Window:_BuildPanel(o)
-	local frame = U.new("Frame", { Name = "SidePanel", BackgroundColor3 = T.Surface, ClipsDescendants = true, Visible = false, ZIndex = 5 })
+	local frame = U.new("Frame", { Name = "SidePanel", BackgroundColor3 = T.Surface, ClipsDescendants = true, Visible = false, ZIndex = 5, Active = true })
 	U.corner(frame, 14)
 	U.stroke(frame, T.BorderHi)
 	local head = U.new("Frame", { Parent = frame, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 48) })
@@ -3250,8 +3254,8 @@ function Window:_PlacePanel(p)
 		-- not enough room: dock inside the window, on the right, over the content
 		f.Parent = self.Main
 		f.AnchorPoint = Vector2.new(1, 0)
-		f.Position = UDim2.new(1, -8, 0, 8)
-		f.Size = UDim2.new(0, math.min(PANEL_W, (self.Size or self.Desired).X - 16), 1, -16)
+		f.Position = UDim2.new(1, -8, 0, HEADER_H + 8)
+		f.Size = UDim2.new(0, math.min(PANEL_W, (self.Size or self.Desired).X - 16), 1, -HEADER_H - 16)
 	end
 	p.Inside = not fitsOutside
 	return f.Position
