@@ -26,6 +26,7 @@ A full example that matches the design mockup is in [`example.lua`](example.lua)
 local Window = Nebula:Window({
 	Title = "OneHub",
 	Subtitle = "Anime Adventures",
+	Logo = "rbxassetid://100199291949935", -- hub logo (default: OneHub); false = drawn nebula
 	Size = Vector2.new(840, 540),      -- start size on PC (always; resizing isn't saved)
 	MobileSize = Vector2.new(600, 340), -- start size on touch devices
 	Folder = "One Hub/_AA_",           -- where configs + settings are saved
@@ -126,4 +127,4 @@ Option names in `Segmented` are shown translated, but callbacks always receive t
 | Text | `#EEEAF8` |
 | Muted | `#A49CBA` |
 
-Font: Montserrat.
+Font: Montserrat. Corners are scaled by `Theme.Roundness` (default `1.65`; `1` is squarer).

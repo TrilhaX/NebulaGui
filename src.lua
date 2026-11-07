@@ -52,6 +52,7 @@ do
 	T.Danger = hex("F472B6")
 	T.DangerText = hex("F9A8D4")
 	T.White = Color3.new(1, 1, 1)
+	T.Roundness = 1.65 -- multiplies every corner radius (1 = original, higher = rounder)
 
 	local fam = "rbxasset://fonts/families/Montserrat.json"
 	F.Regular = Font.new(fam, Enum.FontWeight.Regular)
@@ -140,7 +141,7 @@ do
 	end
 
 	function U.corner(o, r)
-		return U.new("UICorner", { Parent = o, CornerRadius = UDim.new(0, r or 8) })
+		return U.new("UICorner", { Parent = o, CornerRadius = UDim.new(0, math.floor((r or 8) * T.Roundness + 0.5)) })
 	end
 
 	function U.round(o)
@@ -407,6 +408,17 @@ do
 	end
 
 	-- Nebula logo: two counter-rotating comet rings + glowing core
+	-- image logo when one is given, otherwise the drawn nebula
+	function U.brandLogo(parent, size, image, props)
+		if image then
+			local img = U.new("ImageLabel", { Parent = parent, BackgroundTransparency = 1, Image = image, ScaleType = Enum.ScaleType.Fit, Size = UDim2.fromOffset(size, size) })
+			for k, v in pairs(props or {}) do img[k] = v end
+			U.round(img)
+			return img
+		end
+		return U.logo(parent, size, true, props)
+	end
+
 	function U.logo(parent, size, spin, props)
 		local f = U.new("Frame", { Parent = parent, BackgroundTransparency = 1, Size = UDim2.fromOffset(size, size) })
 		for k, v in pairs(props or {}) do f[k] = v end
@@ -646,6 +658,11 @@ function Nebula:Window(o)
 	end
 	local self = setmetatable({}, Window)
 	self.Title = o.Title or "NebulaGui"
+	if o.Logo == false then
+		self.Logo = nil
+	else
+		self.Logo = o.Logo or "rbxassetid://100199291949935" -- OneHub logo
+	end
 	self.Subtitle = o.Subtitle or ""
 	-- start size depends on the device; it is not restored from the last session on purpose
 	local uis = Svc.UserInputService
@@ -870,7 +887,7 @@ function Window:_BuildSidebar(o)
 
 	-- brand
 	local brand = U.new("Frame", { Parent = side, BackgroundTransparency = 1, Position = UDim2.fromOffset(16, 16), Size = UDim2.new(1, -32, 0, 34) })
-	U.logo(brand, 30, true, { Position = UDim2.fromOffset(0, 2) })
+	U.brandLogo(brand, 30, self.Logo, { Position = UDim2.fromOffset(0, 2) })
 	self.TitleLabel = U.text({ Parent = brand, Text = self.Title, FontFace = F.Bold, TextSize = 15, Position = UDim2.fromOffset(40, 1), Size = UDim2.new(1, -40, 0, 18), TextTruncate = Enum.TextTruncate.AtEnd })
 	self.SubtitleLabel = U.text({ Parent = brand, Text = self.Subtitle, TextSize = 11, TextColor3 = T.Muted, Position = UDim2.fromOffset(40, 19), Size = UDim2.new(1, -40, 0, 14), TextTruncate = Enum.TextTruncate.AtEnd })
 
@@ -994,7 +1011,7 @@ function Window:_BuildHeader()
 	self.LangBtn = lang
 	table.insert(Tr.Listeners, function() self.LangLabel.Text = string.upper(Tr.Lang) end)
 
-	self.GearBtn = self:_HeaderButton("Settings", "sliders")
+	self.GearBtn = self:_HeaderButton("Settings", "gear")
 	self.GearBtn.Visible = false
 	U.onClick(self.GearBtn, function() self:_GlobalPopup() end)
 
@@ -1079,7 +1096,7 @@ function Window:_BuildFloat(o)
 	})
 	U.corner(fb, 16)
 	U.stroke(fb, T.Accent, 0.35, 1.5)
-	U.logo(fb, size - 20, true, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5) })
+	U.brandLogo(fb, size - 12, self.Logo, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5) })
 	if o.FloatImage then
 		U.new("ImageLabel", { Parent = fb, BackgroundTransparency = 1, Image = o.FloatImage, Size = UDim2.fromScale(1, 1) })
 	end
