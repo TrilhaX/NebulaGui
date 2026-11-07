@@ -141,7 +141,7 @@ export type GearOptions = { Name: string?, Description: string?, Title: string?,
 export type HeaderOptions = { Name: string?, Text: string?, Flag: string? }
 export type ReorderListOptions = { Items: { any }?, Flag: string?, Callback: Callback<{ any }>, OnRemove: ((item: any, index: number) -> ())? }
 export type TabOptions = { Name: string?, Icon: string? }
-export type SectionOptions = { Name: string?, Side: ("Left" | "Right")? }
+export type SectionOptions = { Name: string?, Description: string?, Side: ("Left" | "Right")? }
 export type NotifyOptions = { Title: string?, Content: string?, Duration: number?, Icon: string?, Translate: boolean?, Force: boolean? }
 export type DialogButton = { Name: string?, Primary: boolean?, Callback: (() -> ())? }
 export type DialogOptions = { Title: string?, Content: string?, Buttons: { DialogButton }? }
@@ -2107,8 +2107,12 @@ function Tab:Section(arg: string | SectionOptions)
 	U.pad(f, 14)
 	U.list(f, 12)
 	if o.Name then
-		local t = U.text({ Parent = f, FontFace = F.Bold, TextSize = 11, TextColor3 = T.Glow, Size = UDim2.new(1, 0, 0, 14), LayoutOrder = 0 })
+		local t = U.text({ Parent = f, FontFace = F.Bold, TextSize = 11, TextColor3 = T.Glow, Size = UDim2.new(1, 0, 0, 14), LayoutOrder = -2 })
 		Tr.Register(t, string.upper(o.Name))
+	end
+	if o.Description then
+		local d = U.text({ Parent = f, TextSize = 11, TextColor3 = T.Muted, TextWrapped = true, Size = UDim2.fromScale(1, 0), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = -1 })
+		Tr.Register(d, o.Description)
 	end
 	local c = Container.new(self.Window, self, f, nil)
 	c.Frame, c.Side, c.Index = f, side, idx

@@ -73,7 +73,7 @@ local Window = Nebula:Window({
 
 ```lua
 local Tab = Window:Tab({ Name = "Auto Farm" })
-local Section = Tab:Section({ Name = "Farm", Side = "Left" }) -- "Left" | "Right"
+local Section = Tab:Section({ Name = "Farm", Description = "Optional subtitle", Side = "Left" }) -- "Left" | "Right"
 ```
 
 ### Elements

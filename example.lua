@@ -51,7 +51,7 @@ tune:Input({ Name = "Webhook", Placeholder = "https://discord.com/api/…", Flag
 tune:Keybind({ Name = "Panic key", Default = Enum.KeyCode.P, Flag = "PanicKey", Callback = function() print("panic") end })
 
 -- Unit abilities ---------------------------------------------------------------
-local ab = Abilities:Section({ Name = "Unit abilities", Side = "Left" })
+local ab = Abilities:Section({ Name = "Unit abilities", Description = "Pick units, then give each one a plan", Side = "Left" })
 local preview = ab:Card({ Title = "Carrot (Ultra)", Image = "" })
 ab:Dropdown({ Name = "Units with abilities", Options = { "Carrot (Ultra)", "Sprintwagon", "Kazzy" }, Default = "Carrot (Ultra)", Callback = function(v) preview:Set(v) end })
 ab:Toggle({ Name = "Use ability", Default = true, Flag = "UseAbility" })
