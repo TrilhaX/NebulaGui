@@ -4,7 +4,8 @@ local Nebula = loadstring(game:HttpGet("https://raw.githubusercontent.com/Trilha
 local Window = Nebula:Window({
 	Title = "OneHub",
 	Subtitle = "Anime Adventures",
-	Size = Vector2.new(840, 540),
+	Size = Vector2.new(840, 540),       -- start size on PC
+	MobileSize = Vector2.new(600, 340), -- start size on phones/tablets
 	Folder = "One Hub/_AA_",
 	Keybind = Enum.KeyCode.RightControl,
 })
@@ -25,7 +26,18 @@ local Settings = Window:Tab({ Name = "Configs" })
 -- Auto Farm ------------------------------------------------------------------
 local main = Farm:Section({ Name = "Farm", Side = "Left" })
 main:Toggle({ Name = "Auto Start", Description = "Starts the match by itself", Flag = "AutoStart", Callback = print })
-main:Toggle({ Name = "Auto Replay", Flag = "AutoReplay", Callback = print })
+-- a gear next to the switch opens a side panel with more options
+main:Toggle({ Name = "Auto Replay", Flag = "AutoReplay", Callback = print, Settings = function(panel)
+	panel:Stepper({ Name = "Replays before leaving", Min = 0, Max = 50, Default = 10, Flag = "ReplayCount" })
+	panel:Toggle({ Name = "Stop on low HP", Flag = "ReplayStopHP" })
+	panel:InfoBox({ Title = "Tip", Text = "0 means replay forever." })
+end })
+-- or a row that is only a gear
+main:Gear({ Name = "Webhook options", Description = "What gets sent to Discord", Build = function(panel)
+	panel:Toggle({ Name = "Send on win", Default = true, Flag = "WhWin" })
+	panel:Toggle({ Name = "Send on loss", Flag = "WhLoss" })
+	panel:Dropdown({ Name = "Ping", Options = { "Nobody", "Me", "@everyone" }, Default = "Me", Flag = "WhPing" })
+end })
 main:Dropdown({ Name = "Map", Options = { "Planet Namak", "Shiganshina", "Snowy Town", "Hidden Sand Village" }, Default = "Planet Namak", Flag = "Map", Callback = print })
 main:Button({ Name = "Join now", Primary = true, Callback = function()
 	Window:Notify({ Title = "Joining", Content = "Teleporting to the selected map." })

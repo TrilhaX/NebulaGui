@@ -26,7 +26,8 @@ A full example that matches the design mockup is in [`example.lua`](example.lua)
 local Window = Nebula:Window({
 	Title = "OneHub",
 	Subtitle = "Anime Adventures",
-	Size = Vector2.new(840, 540),      -- desired size; shrinks to fit the screen
+	Size = Vector2.new(840, 540),      -- start size on PC (always; resizing isn't saved)
+	MobileSize = Vector2.new(600, 340), -- start size on touch devices
 	Folder = "One Hub/_AA_",           -- where configs + settings are saved
 	Keybind = Enum.KeyCode.RightControl,
 	Language = "en",                   -- optional, otherwise saved choice / Roblox locale
@@ -63,6 +64,8 @@ local Window = Nebula:Window({
 | `Window:GlobalSetting({ Name, Default, Callback })` | Switch in the top-bar quick menu; returns `:Set/:Get` |
 | `Window:SettingsSection(tab)` | Ready-made "Interface" section with all of the above |
 | `Window:Close()` | Asks, then destroys |
+| `Window:ResetSize()` | Back to the device's start size and centered |
+| `Window:OpenPanel({ Title, Build })` / `ClosePanel()` | Side panel to the right of the window (inside it when there's no room) |
 | `Window:OnUnload(fn)` | Runs when the UI is destroyed (all extras are undone automatically) |
 
 ### Tab and Section
@@ -97,7 +100,12 @@ Every element is available on a `Section` and on a `Collapsible`. Elements that 
 | `Header` | `Name` (or a string) | `:Set(text)` |
 | `SubLabel` | `Text` (or a string) | `:Set(text)` |
 | `Spacer` | height (number) | |
+| `Gear` | `Name, Description?, Title?, Build(panel)` | `:Open()`, `:Close()` |
 | `Colorpicker` | `Name, Default (Color3), Flag, Callback(Color3)` | `:SetColor(c)`, `:GetColor()` (`:Get()` returns hex for configs) |
+
+Any element with a name and a control (Toggle, Slider-free rows like Dropdown, Input, Stepper, Segmented, Keybind, Colorpicker) accepts `Settings = function(panel) ... end`: a gear appears next to the control and opens the side panel, where `panel` has every element.
+
+The whole UI hides while Roblox's own menu (Esc / Leave) is open, so it never covers it.
 
 `Input` also takes `AcceptedCharacters` (`"Numeric"`, `"Alphabetic"`, `"AlphaNumeric"`), `MaxLength` and `Changed(text)` for every keystroke.
 `Dropdown` also has `:AddOptions`, `:RemoveOptions`, `:ClearOptions`, `:GetOptions`, `:IsOption`.

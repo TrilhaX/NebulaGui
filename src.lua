@@ -359,6 +359,15 @@ do
 		builders.eye(h, c)
 		bar(h, c, 1.1, 2, 0.5, 0.5, -40)
 	end
+	builders.gear = function(h, c)
+		for k = 0, 7 do
+			local a = math.rad(k * 45)
+			local t = bar(h, c, 0, 0, 0.5 + math.cos(a) * 0.36, 0.5 + math.sin(a) * 0.36, k * 45)
+			t.Size = UDim2.fromScale(0.2, 0.2)
+		end
+		ring(h, c, 0.66, 0.5, 0.5, 2.2)
+		ring(h, c, 0.26, 0.5, 0.5, 1.6)
+	end
 	builders.sliders = function(h, c)
 		for i, y in ipairs({ 0.22, 0.5, 0.78 }) do
 			bar(h, c, 0.9, 2, 0.5, y)
@@ -638,13 +647,20 @@ function Nebula:Window(o)
 	local self = setmetatable({}, Window)
 	self.Title = o.Title or "NebulaGui"
 	self.Subtitle = o.Subtitle or ""
-	if typeof(o.Size) == "UDim2" then
-		self.Desired = Vector2.new(o.Size.X.Offset, o.Size.Y.Offset)
-	elseif typeof(o.Size) == "Vector2" then
-		self.Desired = o.Size
-	else
-		self.Desired = Vector2.new(840, 540)
+	-- start size depends on the device; it is not restored from the last session on purpose
+	local uis = Svc.UserInputService
+	self.IsMobile = uis.TouchEnabled and not uis.KeyboardEnabled
+	local function vec(v, fallback)
+		if typeof(v) == "UDim2" then return Vector2.new(v.X.Offset, v.Y.Offset) end
+		if typeof(v) == "Vector2" then return v end
+		return fallback
 	end
+	if self.IsMobile then
+		self.DefaultSize = vec(o.MobileSize, Vector2.new(600, 340))
+	else
+		self.DefaultSize = vec(o.Size, Vector2.new(840, 540))
+	end
+	self.Desired = self.DefaultSize
 	self.Folder = o.Folder or ("NebulaGui/" .. U.cleanName(self.Title))
 	self.Keybind = o.Keybind or Enum.KeyCode.RightControl
 	self.CloseConfirm = o.CloseConfirm ~= false
@@ -679,6 +695,12 @@ function Nebula:Window(o)
 
 	self:_Connect(self.Gui:GetPropertyChangedSignal("AbsoluteSize"), function() self:_Layout() end)
 	self:_Connect(Svc.UserInputService.InputBegan, function(i, gp) self:_OnKey(i, gp) end)
+	-- never cover Roblox's own menu (Esc / Leave): hide everything while it is open
+	pcall(function()
+		self:_Connect(Svc.GuiService.MenuOpened, function() self:_MenuCover(true) end)
+		self:_Connect(Svc.GuiService.MenuClosed, function() self:_MenuCover(false) end)
+		if Svc.GuiService.MenuIsOpen then self:_MenuCover(true) end
+	end)
 	table.insert(Tr.Listeners, function()
 		if self.Gui.Parent then self:_RelayoutAll() end
 	end)
@@ -777,7 +799,7 @@ function Window:_BuildShell()
 	U.onClick(self.Scrim, function() self:_Drawer(false) end)
 
 	self.Overlay = U.new("Frame", {
-		Parent = main,
+		Parent = holder,
 		Name = "Overlay",
 		BackgroundTransparency = 1,
 		Size = UDim2.fromScale(1, 1),
@@ -826,12 +848,7 @@ function Window:_BuildShell()
 	end, function()
 		self._resizing = false
 		tint(T.Faint)
-		self.Settings.Size = { self.Desired.X, self.Desired.Y }
-		self:_SaveSettings()
 	end)
-	if type(self.Settings.Size) == "table" then
-		self.Desired = Vector2.new(tonumber(self.Settings.Size[1]) or self.Desired.X, tonumber(self.Settings.Size[2]) or self.Desired.Y)
-	end
 end
 
 function Window:_BuildSidebar(o)
@@ -1145,6 +1162,7 @@ function Window:_Layout()
 	self:_LayoutHeader()
 	self:_Place()
 	self:_ClampFloat()
+	if self._openPanel then self:_PlacePanel(self._openPanel) end
 end
 
 function Window:_Place()
@@ -1460,11 +1478,15 @@ function Window:_OpenPopup(anchor, width, height)
 	local s = self:_S()
 	local rel = (anchor.AbsolutePosition - ov.AbsolutePosition) / s
 	local asz = anchor.AbsoluteSize / s
-	local area = ov.AbsoluteSize / s
-	height = math.min(height, area.Y - 16)
-	local x = math.clamp(rel.X + asz.X - width, 8, math.max(8, area.X - width - 8))
+	-- bounds = the whole screen, in overlay coordinates (the side panel can sit outside the window)
+	local lo = -ov.AbsolutePosition / s
+	local hi = lo + self.Gui.AbsoluteSize / s
+	catcher.Position = UDim2.fromOffset(lo.X, lo.Y)
+	catcher.Size = UDim2.fromOffset(hi.X - lo.X, hi.Y - lo.Y)
+	height = math.min(height, hi.Y - lo.Y - 16)
+	local x = math.clamp(rel.X + asz.X - width, lo.X + 8, math.max(lo.X + 8, hi.X - width - 8))
 	local y = rel.Y + asz.Y + 6
-	if y + height > area.Y - 8 then y = math.max(8, rel.Y - height - 6) end
+	if y + height > hi.Y - 8 then y = math.max(lo.Y + 8, rel.Y - height - 6) end
 	pop.Size = UDim2.fromOffset(width, height)
 	pop.Position = UDim2.fromOffset(x, y - 6)
 	U.tween(pop, 0.16, { Position = UDim2.fromOffset(x, y) })
@@ -1511,7 +1533,7 @@ end
 -- Search
 ---------------------------------------------------------------------------
 function Window:_Index(cont, name, label, row)
-	if not name or name == "" then return end
+	if not name or name == "" or cont.Tab.NoIndex then return end
 	table.insert(self._index, { name = name, label = label, row = row, cont = cont, tab = cont.Tab })
 end
 
@@ -1643,6 +1665,7 @@ function Window:Dialog(o)
 	self:_ClosePopup()
 	if not self.Visible then self:SetVisible(true) end
 	local scrim = U.button({ Parent = self.Overlay, BackgroundColor3 = T.Background, BackgroundTransparency = 0.3, Size = UDim2.fromScale(1, 1), ZIndex = 5 })
+	U.corner(scrim, 14)
 	local card = U.new("Frame", {
 		Parent = scrim,
 		BackgroundColor3 = T.Surface,
@@ -1911,10 +1934,15 @@ function U.inlineRow(cont, o, ctrlW, ctrlH, stackable)
 		Tr.Register(desc, o.Description)
 	end
 	local ctrl = U.new("Frame", { Parent = row, BackgroundTransparency = 1, Size = UDim2.fromOffset(ctrlW, ctrlH) })
+	local gear, gw = nil, 0
+	if type(o.Settings) == "function" then
+		gear = U.gearButton(w, row, { Title = o.SettingsTitle or o.Name, Build = o.Settings })
+		gw = 34
+	end
 	local run
 	name:GetPropertyChangedSignal("Text"):Connect(function() if run then run(true) end end)
 	run = w:_Watch(cont, row, function(W)
-		local avail = W - ctrlW - 12
+		local avail = W - ctrlW - gw - 12
 		local stacked = stackable and (U.measure(name.Text, 13).X * 1.07 > avail)
 		local tw = stacked and W or avail
 		local nh = U.measureH(name.Text, 13, tw)
@@ -1924,13 +1952,15 @@ function U.inlineRow(cont, o, ctrlW, ctrlH, stackable)
 		if stacked then
 			ty = 0
 			ctrl.Position = UDim2.fromOffset(0, th + 8)
-			ctrl.Size = UDim2.fromOffset(W, ctrlH)
+			ctrl.Size = UDim2.fromOffset(W - gw, ctrlH)
 			h = th + 8 + ctrlH
+			if gear then gear.Position = UDim2.fromOffset(W - 28, th + 8 + math.floor((ctrlH - 28) / 2)) end
 		else
 			h = math.max(th, ctrlH)
 			ty = math.floor((h - th) / 2)
 			ctrl.Position = UDim2.fromOffset(W - ctrlW, math.floor((h - ctrlH) / 2))
 			ctrl.Size = UDim2.fromOffset(ctrlW, ctrlH)
+			if gear then gear.Position = UDim2.fromOffset(W - ctrlW - gw, math.floor((h - 28) / 2)) end
 		end
 		name.Position = UDim2.fromOffset(0, ty)
 		name.Size = UDim2.fromOffset(tw, nh)
@@ -2831,6 +2861,7 @@ function Window:SettingsSection(tab, sectionName)
 	self._fpsToggle = s:Toggle({ Name = "FPS Boost", Description = "Lower graphics. Turning it off restores them.", Callback = function(v) self:SetFPSBoost(v) end })
 	self._hidePlayerToggle = s:Toggle({ Name = "Hide my character", Description = "Hides your name tag, face, clothes and accessories (only for you)", Callback = function(v) self:SetHidePlayer(v) end })
 	s:Divider()
+	s:Button({ Name = "Reset window size", Callback = function() self:ResetSize() end })
 	s:Button({ Name = "Hide interface", Callback = function() self:SetVisible(false) end })
 	s:Button({ Name = "Close interface", Callback = function() self:Close() end })
 	return s
@@ -2977,6 +3008,158 @@ function Container:Colorpicker(o)
 	U.onClick(swatch, open)
 	e:Set(o.Default or T.Accent, true)
 	w:_Flag(o.Flag, e)
+	return e
+end
+
+---------------------------------------------------------------------------
+-- Side panel (opened by a gear): extra options to the right of the window
+---------------------------------------------------------------------------
+local PANEL_W = 290
+
+function Window:_MenuCover(on)
+	self._menuOpen = on
+	self.Gui.Enabled = not on
+	if self._black then self._black.Enabled = not on end
+end
+
+function Window:ResetSize()
+	self.Desired = self.DefaultSize
+	self.Offset = Vector2.new(0, 0)
+	self:_Layout()
+	task.defer(function() self:_RelayoutAll() end)
+end
+
+-- small gear button; clicking toggles the side panel built by o.Build(panel)
+function U.gearButton(w, parent, o)
+	local b = U.button({ Parent = parent, Name = "Gear", BackgroundColor3 = T.Surface, BackgroundTransparency = 0, Size = UDim2.fromOffset(28, 28), ZIndex = 2 })
+	U.corner(b, 8)
+	local st = U.stroke(b, T.Border)
+	local ic = U.icon("gear", b, 14, T.Muted, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5) })
+	local key = {}
+	local function paint(open)
+		st.Color = open and T.Accent or T.Border
+		U.iconColor(ic, open and T.Glow or T.Muted)
+	end
+	U.hover(b, function() U.iconColor(ic, T.Glow) end, function()
+		paint(w._openPanel ~= nil and w._openPanel.Key == key)
+	end)
+	local function toggle()
+		if w._openPanel and w._openPanel.Key == key then
+			w:ClosePanel()
+		else
+			w:OpenPanel({ Key = key, Title = o.Title, Build = o.Build, OnState = paint })
+		end
+	end
+	U.onClick(b, toggle)
+	return b, toggle, key
+end
+
+function Window:_BuildPanel(o)
+	local frame = U.new("Frame", { Name = "SidePanel", BackgroundColor3 = T.Surface, ClipsDescendants = true, Visible = false, ZIndex = 5 })
+	U.corner(frame, 14)
+	U.stroke(frame, T.BorderHi)
+	local head = U.new("Frame", { Parent = frame, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 48) })
+	U.new("Frame", { Parent = head, BackgroundColor3 = T.Border, AnchorPoint = Vector2.new(0, 1), Position = UDim2.fromScale(0, 1), Size = UDim2.new(1, 0, 0, 1) })
+	U.icon("gear", head, 16, T.Glow, { Position = UDim2.new(0, 14, 0.5, -8) })
+	local title = U.text({ Parent = head, FontFace = F.Bold, TextSize = 14, Position = UDim2.fromOffset(40, 0), Size = UDim2.new(1, -84, 1, 0), TextTruncate = Enum.TextTruncate.AtEnd })
+	Tr.Register(title, o.Title or "Settings")
+	local close = U.button({ Parent = head, BackgroundColor3 = T.Elevated, AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -10, 0.5, 0), Size = UDim2.fromOffset(30, 30) })
+	U.corner(close, 8)
+	local cic = U.icon("close", close, 12, T.Muted, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5) })
+	U.hover(close, function() close.BackgroundTransparency = 0; U.iconColor(cic, T.Text) end, function() close.BackgroundTransparency = 1; U.iconColor(cic, T.Muted) end)
+	U.onClick(close, function() self:ClosePanel() end)
+
+	local scroll = U.new("ScrollingFrame", {
+		Parent = frame,
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(0, 48),
+		Size = UDim2.new(1, 0, 1, -48),
+		CanvasSize = UDim2.new(),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		ScrollBarThickness = 3,
+		ScrollBarImageColor3 = T.Accent,
+	})
+	U.new("UIPadding", { Parent = scroll, PaddingBottom = UDim.new(0, 14) })
+	local inner = U.new("Frame", { Parent = scroll, BackgroundTransparency = 1, Position = UDim2.fromOffset(14, 14), Size = UDim2.new(1, -28, 0, 0), AutomaticSize = Enum.AutomaticSize.Y })
+	U.list(inner, 12)
+
+	-- a light tab so every element (relayout, sliders, collapsibles) works unchanged
+	local ptab = setmetatable({ Window = self, Name = o.Title, Page = scroll, Sections = {}, _relayouts = {}, NoIndex = true }, Tab)
+	local c = Container.new(self, ptab, inner, nil)
+	local p = { Key = o.Key, Frame = frame, Container = c, Tab = ptab, Title = title, OnState = o.OnState }
+	if type(o.Build) == "function" then
+		local ok, err = pcall(o.Build, c, p)
+		if not ok then warn("[NebulaGui] panel build error: " .. tostring(err)) end
+	end
+	return p
+end
+
+function Window:_PlacePanel(p)
+	local us = self:_S()
+	local f = p.Frame
+	local screenW = self.Gui.AbsoluteSize.X
+	local holderRight = self.Holder.AbsolutePosition.X + self.Holder.AbsoluteSize.X
+	local fitsOutside = not self.Compact and (screenW - holderRight) >= (PANEL_W + 14) * us
+	if fitsOutside then
+		f.Parent = self.Holder
+		f.AnchorPoint = Vector2.new(0, 0)
+		f.Position = UDim2.new(1, 10, 0, 0)
+		f.Size = UDim2.new(0, PANEL_W, 1, 0)
+	else
+		-- not enough room: dock inside the window, on the right, over the content
+		f.Parent = self.Main
+		f.AnchorPoint = Vector2.new(1, 0)
+		f.Position = UDim2.new(1, -8, 0, 8)
+		f.Size = UDim2.new(0, math.min(PANEL_W, (self.Size or self.Desired).X - 16), 1, -16)
+	end
+	p.Inside = not fitsOutside
+	return f.Position
+end
+
+-- Window:OpenPanel({ Title, Build = function(panel) panel:Toggle(...) end })
+function Window:OpenPanel(o)
+	self._panels = self._panels or {}
+	local key = o.Key or o
+	local p = self._panels[key]
+	if not p then
+		o.Key = key
+		p = self:_BuildPanel(o)
+		self._panels[key] = p
+	end
+	if self._openPanel == p then return p end
+	self:ClosePanel()
+	self:_ClosePopup()
+	self._openPanel = p
+	local target = self:_PlacePanel(p)
+	p.Frame.Position = target + UDim2.fromOffset(p.Inside and 24 or -16, 0)
+	p.Frame.Visible = true
+	U.tween(p.Frame, 0.22, { Position = target }, Enum.EasingStyle.Quint)
+	if p.OnState then p.OnState(true) end
+	task.defer(function() p.Tab:_Relayout() end)
+	return p
+end
+
+function Window:ClosePanel()
+	local p = self._openPanel
+	if not p then return end
+	self._openPanel = nil
+	self:_ClosePopup()
+	p.Frame.Visible = false
+	if p.OnState then p.OnState(false) end
+end
+
+-- New option type: a row with a gear that opens the side panel
+-- Container:Gear({ Name, Description?, Title?, Build = function(panel) ... end })
+function Container:Gear(o)
+	local w = self.Window
+	local row, ctrl = U.inlineRow(self, { Name = o.Name, Description = o.Description }, 28, 28, false)
+	local b, toggle, key = U.gearButton(w, ctrl, { Title = o.Title or o.Name, Build = o.Build or o.Settings })
+	b.Size = UDim2.fromScale(1, 1)
+	local hit = U.button({ Parent = row, Size = UDim2.fromScale(1, 1), ZIndex = 0 })
+	U.onClick(hit, toggle)
+	local e = element(row, o)
+	function e:Open() if not (w._openPanel and w._openPanel.Key == key) then toggle() end end
+	function e:Close() if w._openPanel and w._openPanel.Key == key then w:ClosePanel() end end
 	return e
 end
 
