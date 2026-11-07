@@ -127,4 +127,6 @@ Option names in `Segmented` are shown translated, but callbacks always receive t
 | Text | `#EEEAF8` |
 | Muted | `#A49CBA` |
 
+Icons: the gear and the eye (show/hide profile) use Creator Store images, set in `Nebula.Icons` and replaceable with `Nebula:Window({ Icons = { gear = "rbxassetid://…" } })`; other icons are drawn.
+
 Font: Montserrat. Corners are scaled by `Theme.Roundness` (default `1.65`; `1` is squarer).

@@ -20,6 +20,15 @@ local Svc = setmetatable({}, {
 })
 
 local Nebula = { Version = "0.1.0", Windows = {} }
+
+-- image icons (Creator Store assets, loaded through rbxthumb so decal ids work too).
+-- any kind not listed here is drawn with frames. Override with Nebula:Window({ Icons = { gear = "rbxassetid://..." } })
+local function thumb(id) return "rbxthumb://type=Asset&id=" .. id .. "&w=150&h=150" end
+Nebula.Icons = {
+	gear = thumb(130522520017662),
+	eye = thumb(6523858422),
+	eyeoff = thumb(133178224707634),
+}
 local T = {} -- theme
 local F = {} -- fonts
 local U = {} -- utilities
@@ -388,6 +397,20 @@ do
 	end
 
 	function U.icon(kind, parent, size, color, props)
+		local image = Nebula.Icons[kind]
+		if image then
+			local img = U.new("ImageLabel", {
+				Parent = parent,
+				Name = "Icon",
+				BackgroundTransparency = 1,
+				Image = image,
+				ImageColor3 = color or T.Text,
+				ScaleType = Enum.ScaleType.Fit,
+				Size = UDim2.fromOffset(size, size),
+			})
+			for k, v in pairs(props or {}) do img[k] = v end
+			return img
+		end
 		local h = U.new("Frame", {
 			Parent = parent,
 			Name = "Icon",
@@ -401,6 +424,10 @@ do
 	end
 
 	function U.iconColor(h, color)
+		if h:IsA("ImageLabel") then
+			h.ImageColor3 = color
+			return
+		end
 		for _, d in ipairs(h:GetDescendants()) do
 			if d:IsA("Frame") and d.BackgroundTransparency < 1 then d.BackgroundColor3 = color end
 			if d:IsA("UIStroke") then d.Color = color end
@@ -653,6 +680,9 @@ local MIN_W, MIN_H = 260, 200
 
 function Nebula:Window(o)
 	o = o or {}
+	if type(o.Icons) == "table" then
+		for k, v in pairs(o.Icons) do Nebula.Icons[k] = v end
+	end
 	if type(o.Theme) == "table" then
 		for k, v in pairs(o.Theme) do T[k] = v end
 	end
