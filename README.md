@@ -10,7 +10,7 @@ A full example that matches the design mockup is in [`example.lua`](example.lua)
 
 ## Highlights
 
-- **Responsive.** The window fits the screen and follows rotation. Below 640 px wide the tab list becomes a slide-in drawer and the search collapses to an icon. When there isn't room for two columns, sections drop to one.
+- **Responsive.** The window fits the screen and follows rotation. Drag the bottom-right corner to resize it to any size (mouse or touch), from 260×200 up to the full screen. Below 640 px wide the tab list becomes a slide-in drawer and the search collapses to an icon. When there isn't room for two columns, sections drop to one.
 - **Aligned rows.** Slider names, bars and values line up in columns. A long name moves the control to its own line instead of squeezing it.
 - **Auto-translate.** Uses Google with 8 languages (EN, PT, ES, RU, TH, VI, ID, FI). The language is detected from the Roblox locale and can be changed from the globe button. Translations are cached in `NebulaGui/i18n/`.
 - **Search** in the top bar (Ctrl+F). Picking a result opens its tab, expands collapsed groups, scrolls to the element and highlights it.

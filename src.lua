@@ -628,6 +628,7 @@ Nebula.Translator = Tr
 ---------------------------------------------------------------------------
 local SIDEBAR_W = 196
 local HEADER_H = 52
+local MIN_W, MIN_H = 260, 200
 
 function Nebula:Window(o)
 	o = o or {}
@@ -783,32 +784,48 @@ function Window:_BuildShell()
 		ZIndex = 10,
 	})
 
-	-- resize grip (mouse users only)
+	-- resize grip: any size from MIN_W x MIN_H up to the whole screen, mouse or touch
+	local touch = Svc.UserInputService.TouchEnabled
 	local grip = U.button({
 		Parent = main,
 		Name = "Resize",
 		AnchorPoint = Vector2.new(1, 1),
-		Position = UDim2.new(1, -2, 1, -2),
-		Size = UDim2.fromOffset(16, 16),
+		Position = UDim2.fromScale(1, 1),
+		Size = UDim2.fromOffset(touch and 30 or 18, touch and 30 or 18),
 		ZIndex = 9,
 	})
-	for i = 1, 2 do
-		U.new("Frame", {
+	local lines = {}
+	for i = 1, 3 do
+		lines[i] = U.new("Frame", {
 			Parent = grip,
 			BackgroundColor3 = T.Faint,
-			AnchorPoint = Vector2.new(0.5, 0.5),
-			Position = UDim2.fromScale(0.62 + i * 0.08, 0.62 + i * 0.08),
-			Size = UDim2.new(0.5 - i * 0.18, 0, 0, 2),
-			Rotation = -45,
+			AnchorPoint = Vector2.new(1, 1),
+			Position = UDim2.new(1, -3, 1, -3 - (i - 1) * 4),
+			Size = UDim2.fromOffset(2 + (i - 1) * 4, 2),
 		})
+		U.round(lines[i])
 	end
+	local function tint(c) for _, l in ipairs(lines) do U.tween(l, 0.12, { BackgroundColor3 = c }) end end
+	U.hover(grip, function() tint(T.Glow) end, function() if not self._resizing then tint(T.Faint) end end)
 	self.Grip = grip
-	local base
-	U.drag(self, grip, function() base = self.Desired end, function(d)
-		d = d / self.UserScale
-		self.Desired = Vector2.new(math.max(480, base.X + d.X), math.max(320, base.Y + d.Y))
+
+	-- the top-left corner stays put while the bottom-right follows the pointer
+	local baseSize, baseOff
+	U.drag(self, grip, function()
+		self._resizing = true
+		baseSize, baseOff = self.Size or self.Desired, self.Offset
+		tint(T.Glow)
+	end, function(d)
+		local us = self.UserScale
+		local maxS = self.Gui.AbsoluteSize / us
+		local nw = math.clamp(baseSize.X + d.X / us, MIN_W, math.max(MIN_W, maxS.X))
+		local nh = math.clamp(baseSize.Y + d.Y / us, MIN_H, math.max(MIN_H, maxS.Y))
+		self.Desired = Vector2.new(math.floor(nw), math.floor(nh))
+		self.Offset = baseOff + (self.Desired - baseSize) * us / 2
 		self:_Layout()
 	end, function()
+		self._resizing = false
+		tint(T.Faint)
 		self.Settings.Size = { self.Desired.X, self.Desired.Y }
 		self:_SaveSettings()
 	end)
@@ -1108,8 +1125,8 @@ function Window:_Layout()
 	-- work in "design" pixels: the UIScale on the holder multiplies everything by UserScale
 	local us = self.UserScale
 	local scr = real / us
-	local w = math.max(300, math.min(self.Desired.X, scr.X - 16))
-	local h = math.max(240, math.min(self.Desired.Y, scr.Y - 16))
+	local w = math.max(MIN_W, math.min(self.Desired.X, scr.X))
+	local h = math.max(MIN_H, math.min(self.Desired.Y, scr.Y))
 	self.Holder.Size = UDim2.fromOffset(w, h)
 	self.Size = Vector2.new(w, h)
 	if not self._animating then self.Scale.Scale = us end
@@ -1124,8 +1141,6 @@ function Window:_Layout()
 		for _, tab in ipairs(self.Tabs) do tab:_SetCols(cols) end
 	end
 
-	local touchOnly = Svc.UserInputService.TouchEnabled and not Svc.UserInputService.MouseEnabled
-	self.Grip.Visible = not compact and not touchOnly
 	self.NotifyHolder.Size = UDim2.new(0, math.min(290, real.X - 32), 1, -32)
 	self:_LayoutHeader()
 	self:_Place()
