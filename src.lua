@@ -215,10 +215,21 @@ do
 		return tw
 	end
 
+	local measureCache, measureCount = {}, 0
 	function U.measure(text, size, width)
 		if text == nil or text == "" then return Vector2.new(0, 0) end
-		local ok, v = pcall(Svc.TextService.GetTextSize, Svc.TextService, text, size, F.Measure, Vector2.new(width or 1e4, 1e4))
-		return ok and v or Vector2.new(#text * size * 0.55, size + 3)
+		width = math.floor(width or 1e4)
+		local key = size .. "|" .. width .. "|" .. text
+		local hit = measureCache[key]
+		if hit then return hit end
+		local ok, v = pcall(Svc.TextService.GetTextSize, Svc.TextService, text, size, F.Measure, Vector2.new(width, 1e4))
+		v = ok and v or Vector2.new(#text * size * 0.55, size + 3)
+		measureCount += 1
+		if measureCount > 3000 then -- bounded: drop everything rather than grow forever
+			measureCache, measureCount = {}, 0
+		end
+		measureCache[key] = v
+		return v
 	end
 
 	-- height of wrapped text; measured a bit narrower because labels use heavier weights
@@ -721,6 +732,8 @@ Nebula.Translator = Tr
 -- Window: construction
 ---------------------------------------------------------------------------
 local SIDEBAR_W = 196
+local TOUCH = Svc.UserInputService.TouchEnabled and not Svc.UserInputService.KeyboardEnabled
+local SMALL_BTN = TOUCH and 30 or 26 -- small round buttons (stepper ±, eye, list arrows)
 local HEADER_H = 52
 local MIN_W, MIN_H = 260, 200
 
@@ -1025,7 +1038,7 @@ function Window:_BuildProfile(side)
 	local user = U.text({ Parent = card, TextSize = 10, TextColor3 = T.Muted, Position = UDim2.fromOffset(48, 25), Size = UDim2.new(1, -84, 0, 14), TextTruncate = Enum.TextTruncate.AtEnd })
 
 	-- eye button: hides avatar + names (for recording / screenshots)
-	local eye = U.button({ Parent = card, BackgroundColor3 = T.Elevated, AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8, 0.5, 0), Size = UDim2.fromOffset(26, 26) })
+	local eye = U.button({ Parent = card, BackgroundColor3 = T.Elevated, AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8, 0.5, 0), Size = UDim2.fromOffset(SMALL_BTN, SMALL_BTN) })
 	U.corner(eye, 7)
 	U.hover(eye, function() U.tween(eye, 0.12, { BackgroundTransparency = 0 }) end, function() U.tween(eye, 0.12, { BackgroundTransparency = 1 }) end)
 	U.onClick(eye, function() self:SetUserInfoHidden(not self.ProfileHidden) end)
@@ -1178,7 +1191,14 @@ function Window:_BuildSearch()
 			end
 		end)
 	end)
-	box:GetPropertyChangedSignal("Text"):Connect(function() self:_Search(box.Text) end)
+	local searchToken = 0
+	box:GetPropertyChangedSignal("Text"):Connect(function()
+		searchToken += 1
+		local t = searchToken
+		task.delay(0.12, function()
+			if t == searchToken then self:_Search(box.Text) end
+		end)
+	end)
 	self.SearchFrame, self.SearchBox, self.SearchHit = sf, box, hit
 end
 
@@ -1384,7 +1404,7 @@ function Window:_Watch(cont, row, fn)
 	row:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
 		if not self._animating then run(false) end
 	end)
-	table.insert(cont.Tab._relayouts, function() run(true) end)
+	table.insert(cont.Tab._relayouts, { row, run })
 	task.defer(run, true)
 	return run
 end
@@ -1678,6 +1698,9 @@ function Window:_Search(q)
 	self:_HideSearchResults()
 	q = q:lower():gsub("^%s+", ""):gsub("%s+$", "")
 	if q == "" then return end
+	for i = #self._index, 1, -1 do
+		if not self._index[i].row.Parent then table.remove(self._index, i) end
+	end
 	local found = {}
 	for _, e in ipairs(self._index) do
 		if e.row.Parent and (e.name:lower():find(q, 1, true) or e.label.Text:lower():find(q, 1, true)) then
@@ -1751,6 +1774,11 @@ function Window:Notify(o)
 		return { Close = function() end }
 	end
 	local translate = o.Translate ~= false
+	local live = {}
+	for _, c in ipairs(self.NotifyHolder:GetChildren()) do
+		if c:IsA("CanvasGroup") then table.insert(live, c) end
+	end
+	for i = 1, #live - 3 do live[i]:Destroy() end -- oldest first; keeps 3 + the new one
 	local card = U.new("CanvasGroup", {
 		Parent = self.NotifyHolder,
 		BackgroundColor3 = T.Surface,
@@ -1986,7 +2014,11 @@ function Tab:_SetCols(n)
 end
 
 function Tab:_Relayout()
-	for _, fn in ipairs(self._relayouts) do fn() end
+	local list = self._relayouts
+	for i = #list, 1, -1 do
+		local item = list[i]
+		if item[1].Parent then item[2](true) else table.remove(list, i) end
+	end
 end
 
 function Tab:Section(o)
@@ -2521,12 +2553,12 @@ function Container:Stepper(o)
 	local min, max = o.Min or -math.huge, o.Max or math.huge
 	local step = o.Step or 1
 	local decimals = step < 1 and #(tostring(step):match("%.(%d+)") or "") or 0
-	local row, ctrl = U.inlineRow(self, o, 108, 30, false)
+	local row, ctrl = U.inlineRow(self, o, SMALL_BTN * 2 + 60, SMALL_BTN + 4, false)
 	local pill = U.new("Frame", { Parent = ctrl, BackgroundColor3 = T.Background, Size = UDim2.fromScale(1, 1) })
 	U.round(pill)
 	U.stroke(pill, T.Border)
 	local function side(kind, anchorX, posX)
-		local b = U.button({ Parent = pill, BackgroundColor3 = T.Elevated, BackgroundTransparency = 0, AnchorPoint = Vector2.new(anchorX, 0.5), Position = UDim2.new(posX, anchorX == 0 and 2 or -2, 0.5, 0), Size = UDim2.fromOffset(26, 26) })
+		local b = U.button({ Parent = pill, BackgroundColor3 = T.Elevated, BackgroundTransparency = 0, AnchorPoint = Vector2.new(anchorX, 0.5), Position = UDim2.new(posX, anchorX == 0 and 2 or -2, 0.5, 0), Size = UDim2.fromOffset(SMALL_BTN, SMALL_BTN) })
 		U.round(b)
 		U.icon(kind, b, 10, kind == "plus" and T.Glow or T.Muted, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5) })
 		return b
@@ -2536,8 +2568,8 @@ function Container:Stepper(o)
 	local box = U.new("TextBox", {
 		Parent = pill,
 		BackgroundTransparency = 1,
-		Position = UDim2.fromOffset(30, 0),
-		Size = UDim2.new(1, -60, 1, 0),
+		Position = UDim2.fromOffset(SMALL_BTN + 4, 0),
+		Size = UDim2.new(1, -(SMALL_BTN + 4) * 2, 1, 0),
 		FontFace = F.Bold,
 		TextSize = 13,
 		TextColor3 = T.Text,
@@ -3314,7 +3346,9 @@ end
 -- and on release it snaps into its slot with a small bounce.
 function Container:ReorderList(o)
 	local w = self.Window
-	local ROW, GAP = 40, 6
+	local ROW, GAP = TOUCH and 44 or 40, 6
+	local A = TOUCH and 28 or 22 -- arrow button size
+	local RM_X = -(6 + A * 2 + 8)
 	local STEP = ROW + GAP
 	local row = self:_NewRow(0)
 	local list = U.new("Frame", { Parent = row, BackgroundTransparency = 1, Size = UDim2.fromScale(1, 0) })
@@ -3370,14 +3404,14 @@ function Container:ReorderList(o)
 	end
 
 	local function applyWidth(r)
-		r.rm.Size = UDim2.fromOffset(narrow and 24 or 70, 22)
+		r.rm.Size = UDim2.fromOffset(narrow and A or 70, A)
 		r.rmText.Visible = not narrow
 		r.rmIcon.Visible = narrow
-		r.label.Size = UDim2.new(1, -58 - (narrow and 88 or 134), 1, 0)
+		r.label.Size = UDim2.new(1, -58 + RM_X - (narrow and A or 70) - 6, 1, 0)
 	end
 
 	local function small(parent, kind, x)
-		local b = U.button({ Parent = parent, BackgroundColor3 = T.Elevated2, AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, x, 0.5, 0), Size = UDim2.fromOffset(22, 22) })
+		local b = U.button({ Parent = parent, BackgroundColor3 = T.Elevated2, AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, x, 0.5, 0), Size = UDim2.fromOffset(A, A) })
 		U.corner(b, 6)
 		local ic = U.icon(kind, b, 11, T.Muted, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5) })
 		U.hover(b, function()
@@ -3421,7 +3455,7 @@ function Container:ReorderList(o)
 		r.num = U.text({ Parent = r.badge, FontFace = F.Bold, TextSize = 11, Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center })
 		r.label = U.text({ Parent = fr, Text = tostring(value), FontFace = F.SemiBold, TextSize = 12, Position = UDim2.fromOffset(60, 0), TextTruncate = Enum.TextTruncate.AtEnd })
 
-		r.rm = U.button({ Parent = fr, BackgroundColor3 = T.Danger, BackgroundTransparency = 0.85, AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -58, 0.5, 0) })
+		r.rm = U.button({ Parent = fr, BackgroundColor3 = T.Danger, BackgroundTransparency = 0.85, AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, RM_X, 0.5, 0) })
 		U.corner(r.rm, 6)
 		r.rmText = U.text({ Parent = r.rm, FontFace = F.Bold, TextSize = 11, TextColor3 = T.DangerText, Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center })
 		Tr.Register(r.rmText, "Remove")
@@ -3429,7 +3463,7 @@ function Container:ReorderList(o)
 		U.hover(r.rm, function() U.tween(r.rm, 0.12, { BackgroundTransparency = 0.7 }) end, function() U.tween(r.rm, 0.12, { BackgroundTransparency = 0.85 }) end)
 		applyWidth(r)
 
-		U.onClick(small(fr, "up", -32), function() move(r, -1) end)
+		U.onClick(small(fr, "up", -(6 + A + 4)), function() move(r, -1) end)
 		U.onClick(small(fr, "down", -6), function() move(r, 1) end)
 		U.onClick(r.rm, function()
 			local i = table.find(rows, r)
