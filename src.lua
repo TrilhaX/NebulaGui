@@ -28,6 +28,7 @@ Nebula.Icons = {
 	gear = thumb(130522520017662),
 	eye = thumb(6523858422),
 	eyeoff = thumb(133178224707634),
+	globe = thumb(11395780614),
 }
 local T = {} -- theme
 local F = {} -- fonts
@@ -552,9 +553,17 @@ do
 		return s
 	end
 
+	local registrations = 0
 	function Tr.Register(obj, s, prop)
 		if s == nil then return end
 		s = tostring(s)
+		registrations += 1
+		if registrations % 300 == 0 then
+			-- drop labels that were destroyed (notifications, popups, removed rows)
+			for o in pairs(Tr.Items) do
+				if not o.Parent then Tr.Items[o] = nil end
+			end
+		end
 		Tr.Items[obj] = { s, prop or "Text" }
 		obj[prop or "Text"] = Tr.Get(s)
 	end
@@ -652,7 +661,11 @@ do
 				Tr.Items[obj] = nil
 			end
 		end
-		for _, fn in ipairs(Tr.Listeners) do pcall(fn) end
+		-- a listener returns "remove" once its UI is gone, so destroyed windows/dropdowns don't pile up
+		for i = #Tr.Listeners, 1, -1 do
+			local ok, r = pcall(Tr.Listeners[i])
+			if ok and r == "remove" then table.remove(Tr.Listeners, i) end
+		end
 	end
 
 	function Tr.SetLang(lang)
@@ -749,7 +762,8 @@ function Nebula:Window(o)
 		if Svc.GuiService.MenuIsOpen then self:_MenuCover(true) end
 	end)
 	table.insert(Tr.Listeners, function()
-		if self.Gui.Parent then self:_RelayoutAll() end
+		if not self.Gui.Parent then return "remove" end
+		self:_RelayoutAll()
 	end)
 
 	Tr.SetLang(self.Settings.Language or o.Language or Tr.Detect())
@@ -763,6 +777,17 @@ end
 function Window:_Connect(signal, fn)
 	local c = signal:Connect(fn)
 	table.insert(self._conns, c)
+	return c
+end
+
+-- same, but also disconnected when `owner` is destroyed (element:Destroy(), list rows…)
+function Window:_ConnectFor(owner, signal, fn)
+	local c = self:_Connect(signal, fn)
+	owner.Destroying:Connect(function()
+		c:Disconnect()
+		local i = table.find(self._conns, c)
+		if i then table.remove(self._conns, i) end
+	end)
 	return c
 end
 
@@ -832,7 +857,7 @@ function Window:_BuildShell()
 		Name = "Pages",
 		BackgroundTransparency = 1,
 		Position = UDim2.fromOffset(0, HEADER_H),
-		Size = UDim2.new(1, 0, 1, -HEADER_H),
+		Size = UDim2.new(1, 0, 1, -HEADER_H - 10),
 	})
 	self.Scrim = U.button({
 		Parent = main,
@@ -1039,7 +1064,10 @@ function Window:_BuildHeader()
 	self.LangLabel = U.text({ Parent = lang, FontFace = F.SemiBold, TextSize = 12, Position = UDim2.fromOffset(28, 0), Size = UDim2.new(1, -32, 1, 0) })
 	U.onClick(lang, function() self:_LanguagePopup() end)
 	self.LangBtn = lang
-	table.insert(Tr.Listeners, function() self.LangLabel.Text = string.upper(Tr.Lang) end)
+	table.insert(Tr.Listeners, function()
+		if not self.LangLabel.Parent then return "remove" end
+		self.LangLabel.Text = string.upper(Tr.Lang)
+	end)
 
 	self.GearBtn = self:_HeaderButton("Settings", "gear")
 	self.GearBtn.Visible = false
@@ -1349,6 +1377,7 @@ function Window:SetVisible(v, instant)
 	self.Visible = v
 	self:_ClosePopup()
 	if v then
+		self._hideToken = (self._hideToken or 0) + 1
 		self.Holder.Visible = true
 		if not instant then
 			self._animating = true
@@ -1360,7 +1389,20 @@ function Window:SetVisible(v, instant)
 			end)
 		end
 	else
-		self.Holder.Visible = false
+		self._hideToken = (self._hideToken or 0) + 1
+		local token = self._hideToken
+		if instant then
+			self.Holder.Visible = false
+		else
+			self._animating = true
+			U.tween(self.Scale, 0.14, { Scale = self.UserScale * 0.96 }, Enum.EasingStyle.Quad)
+			task.delay(0.14, function()
+				if self._hideToken ~= token or self.Visible then return end
+				self.Holder.Visible = false
+				self.Scale.Scale = self.UserScale
+				self._animating = false
+			end)
+		end
 		if not instant and self.HideNotice and not self._noticeShown then
 			self._noticeShown = true -- once per session, so it doesn't nag
 			local how = self.Float and "Tap the floating button" or "Press the toggle key"
@@ -1519,7 +1561,7 @@ function Window:_OpenPopup(anchor, width, height)
 	self:_ClosePopup()
 	local ov = self.Overlay
 	local catcher = U.button({ Parent = ov, Size = UDim2.fromScale(1, 1), ZIndex = 1 })
-	local pop = U.new("Frame", { Parent = ov, BackgroundColor3 = T.Surface, ZIndex = 2, ClipsDescendants = true })
+	local pop = U.new("CanvasGroup", { Parent = ov, BackgroundColor3 = T.Surface, ZIndex = 2 })
 	U.corner(pop, 10)
 	U.stroke(pop, T.BorderHi)
 	local s = self:_S()
@@ -1962,6 +2004,17 @@ local function element(row, o)
 		local l = row:FindFirstChild("Title")
 		if l then Tr.Register(l, t) end
 	end
+	-- disabled: dims the row and swallows input
+	function e:SetDisabled(on)
+		local cover = row:FindFirstChild("Disabled")
+		if on and not cover then
+			cover = U.button({ Parent = row, Name = "Disabled", BackgroundColor3 = T.Elevated, BackgroundTransparency = 0.35, Size = UDim2.new(1, 4, 1, 4), Position = UDim2.fromOffset(-2, -2), ZIndex = 20 })
+			U.corner(cover, 6)
+		elseif not on and cover then
+			cover:Destroy()
+		end
+		e.Disabled = on == true
+	end
 	-- MacLib-style aliases
 	e.UpdateName = e.SetName
 	e.SetVisibility = e.SetVisible
@@ -2119,12 +2172,12 @@ function Container:Slider(o)
 			update(i.Position.X)
 		end
 	end)
-	w:_Connect(Svc.UserInputService.InputChanged, function(i)
+	w:_ConnectFor(row, Svc.UserInputService.InputChanged, function(i)
 		if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
 			update(i.Position.X)
 		end
 	end)
-	w:_Connect(Svc.UserInputService.InputEnded, function(i)
+	w:_ConnectFor(row, Svc.UserInputService.InputEnded, function(i)
 		if dragging and U.isPress(i) then
 			dragging = false
 			self.Tab.Page.ScrollingEnabled = true
@@ -2309,7 +2362,10 @@ function Container:Dropdown(o)
 	e.InsertOptions = e.AddOptions
 	e.UpdateSelection = e.Set
 	U.onClick(btn, function() w:_DropdownPopup(e, ctrl) end)
-	table.insert(Tr.Listeners, function() if row.Parent then e._display() end end)
+	table.insert(Tr.Listeners, function()
+		if not row.Parent then return "remove" end
+		e._display()
+	end)
 
 	if e.Multi then e:Set(o.Default or {}, true) else e:Set(o.Default, true) end
 	w:_Flag(o.Flag, e)
@@ -2525,7 +2581,7 @@ function Container:Keybind(o)
 		b.Text = "…"
 		st.Color = T.Accent
 	end)
-	w:_Connect(Svc.UserInputService.InputBegan, function(i, gp)
+	w:_ConnectFor(row, Svc.UserInputService.InputBegan, function(i, gp)
 		if listening and i.UserInputType == Enum.UserInputType.Keyboard then
 			listening = false
 			st.Color = T.Border
@@ -3120,7 +3176,7 @@ function Window:_BuildPanel(o)
 		Parent = frame,
 		BackgroundTransparency = 1,
 		Position = UDim2.fromOffset(0, 48),
-		Size = UDim2.new(1, 0, 1, -48),
+		Size = UDim2.new(1, 0, 1, -60),
 		CanvasSize = UDim2.new(),
 		AutomaticCanvasSize = Enum.AutomaticSize.Y,
 		ScrollBarThickness = 3,
@@ -3361,7 +3417,7 @@ function Container:ReorderList(o)
 		return r
 	end
 
-	w:_Connect(Svc.UserInputService.InputChanged, function(i)
+	w:_ConnectFor(row, Svc.UserInputService.InputChanged, function(i)
 		if not drag then return end
 		if i.UserInputType ~= Enum.UserInputType.MouseMovement and i ~= drag.input then return end
 		local y = math.clamp(drag.base + (i.Position.Y - drag.y) / w:_S(), -10, totalH() - ROW + 10)
@@ -3374,7 +3430,7 @@ function Container:ReorderList(o)
 			layout(false)
 		end
 	end)
-	w:_Connect(Svc.UserInputService.InputEnded, function(i)
+	w:_ConnectFor(row, Svc.UserInputService.InputEnded, function(i)
 		if not drag or not (i == drag.input or i.UserInputType == Enum.UserInputType.MouseButton1) then return end
 		local r = drag.r
 		drag = nil

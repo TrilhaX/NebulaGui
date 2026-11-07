@@ -78,7 +78,7 @@ local Section = Tab:Section({ Name = "Farm", Side = "Left" }) -- "Left" | "Right
 
 ### Elements
 
-Every element is available on a `Section` and on a `Collapsible`. Elements that take a `Flag` have `:Set(value, silent?)` and `:Get()`. All elements also have `:SetVisible(bool)` and `:Destroy()`.
+Every element is available on a `Section` and on a `Collapsible`. Elements that take a `Flag` have `:Set(value, silent?)` and `:Get()`. All elements also have `:SetVisible(bool)`, `:SetDisabled(bool)` (dims and blocks input) and `:Destroy()`.
 
 | Element | Options | Extra methods |
 | --- | --- | --- |
@@ -127,6 +127,6 @@ Option names in `Segmented` are shown translated, but callbacks always receive t
 | Text | `#EEEAF8` |
 | Muted | `#A49CBA` |
 
-Icons: the gear and the eye (show/hide profile) use Creator Store images, set in `Nebula.Icons` and replaceable with `Nebula:Window({ Icons = { gear = "rbxassetid://…" } })`; other icons are drawn.
+Icons: the gear, the globe and the eye (show/hide profile) use Creator Store images, set in `Nebula.Icons` and replaceable with `Nebula:Window({ Icons = { gear = "rbxassetid://…" } })`; other icons are drawn.
 
 Font: Montserrat. Corners are scaled by `Theme.Roundness` (default `1.65`; `1` is squarer).
