@@ -9,6 +9,13 @@ local Window = Nebula:Window({
 	Keybind = Enum.KeyCode.RightControl,
 })
 
+-- quick switches behind the sliders button in the top bar (MacLib GlobalSetting)
+Window:GlobalSetting({ Name = "Notifications", Default = Window:GetNotificationsState(), Callback = function(v) Window:SetNotificationsState(v) end })
+Window:GlobalSetting({ Name = "Show my profile", Default = Window:GetUserInfoState(), Callback = function(v) Window:SetUserInfoState(v) end })
+Window:GlobalSetting({ Name = "Low CPU (black screen)", Callback = function(v) Window:SetLowCpu(v) end })
+
+Window:OnUnload(function() print("NebulaGui closed") end)
+
 Window:Category("Main")
 local Farm = Window:Tab({ Name = "Auto Farm" })
 local Abilities = Window:Tab({ Name = "Unit abilities" })
@@ -62,10 +69,13 @@ ab:InfoBox({
 	Text = "Each step waits for its conditions, then casts that copy's ability (#1 is the first one placed). Time counts from the previous cast. Copies that aren't on the map are skipped. Cycle starts again from the first step; Once stops after the last.",
 })
 
--- Configs ----------------------------------------------------------------------
+-- Configs + interface extras (UI size, hide, low CPU, FPS boost, hide character…) ---
 Window:ConfigSection(Settings)
-local ui = Settings:Section({ Name = "Interface" })
-ui:Keybind({ Name = "Toggle UI", Default = Enum.KeyCode.RightControl, Changed = function(k) if k then Window:SetKeybind(k) end end })
-ui:Button({ Name = "Close interface", Callback = function() Window:Destroy() end })
+Window:SettingsSection(Settings)
+
+local look = Settings:Section({ Name = "Look" })
+look:Header("Colors")
+look:Colorpicker({ Name = "Accent", Default = Color3.fromHex("8B5CF6"), Flag = "Accent", Callback = print })
+look:SubLabel("Accent changes apply to new elements only.")
 
 Window:LoadAutoConfig()

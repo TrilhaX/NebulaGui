@@ -348,6 +348,25 @@ do
 		local b = bar(h, c, 0.09, 2, 0.5, 0.62)
 		b.Size = UDim2.new(0, 2, 0.34, 0)
 	end
+	builders.eye = function(h, c)
+		local e = ring(h, c, 0.9, 0.5, 0.5, 1.6)
+		e.Size = UDim2.fromScale(0.95, 0.6)
+		local p = bar(h, c, 0, 0, 0.5, 0.5)
+		p.Size = UDim2.fromScale(0.28, 0.28)
+		U.round(p)
+	end
+	builders.eyeoff = function(h, c)
+		builders.eye(h, c)
+		bar(h, c, 1.1, 2, 0.5, 0.5, -40)
+	end
+	builders.sliders = function(h, c)
+		for i, y in ipairs({ 0.22, 0.5, 0.78 }) do
+			bar(h, c, 0.9, 2, 0.5, y)
+			local k = bar(h, c, 0, 0, ({ 0.3, 0.68, 0.45 })[i], y)
+			k.Size = UDim2.fromOffset(6, 6)
+			U.round(k)
+		end
+	end
 	builders.grip = function(h, c)
 		for _, x in ipairs({ 0.32, 0.68 }) do
 			for _, y in ipairs({ 0.2, 0.5, 0.8 }) do
@@ -637,9 +656,19 @@ function Nebula:Window(o)
 	self.Offset = Vector2.new(0, 0)
 	self.Cols = 0
 	self.Visible = true
+	self._unload = {}
+	self._globals = {}
+	self.HideNotice = o.HideNotice ~= false
 
 	FS.mkdir(self.Folder .. "/configs")
 	self.Settings = FS.readJSON(self.Folder .. "/nebula.json") or {}
+	self.UserScale = math.clamp(tonumber(self.Settings.Scale) or o.Scale or 1, 0.5, 1.5)
+	self.NotificationsEnabled = self.Settings.Notifications ~= false
+	if self.Settings.HideUserInfo ~= nil then
+		self.ProfileHidden = self.Settings.HideUserInfo
+	else
+		self.ProfileHidden = o.HideUserInfo == true
+	end
 
 	self:_BuildShell()
 	self:_BuildSidebar(o)
@@ -776,6 +805,7 @@ function Window:_BuildShell()
 	self.Grip = grip
 	local base
 	U.drag(self, grip, function() base = self.Desired end, function(d)
+		d = d / self.UserScale
 		self.Desired = Vector2.new(math.max(480, base.X + d.X), math.max(320, base.Y + d.Y))
 		self:_Layout()
 	end, function()
@@ -807,8 +837,8 @@ function Window:_BuildSidebar(o)
 	-- brand
 	local brand = U.new("Frame", { Parent = side, BackgroundTransparency = 1, Position = UDim2.fromOffset(16, 16), Size = UDim2.new(1, -32, 0, 34) })
 	U.logo(brand, 30, true, { Position = UDim2.fromOffset(0, 2) })
-	U.text({ Parent = brand, Text = self.Title, FontFace = F.Bold, TextSize = 15, Position = UDim2.fromOffset(40, 1), Size = UDim2.new(1, -40, 0, 18), TextTruncate = Enum.TextTruncate.AtEnd })
-	U.text({ Parent = brand, Text = self.Subtitle, TextSize = 11, TextColor3 = T.Muted, Position = UDim2.fromOffset(40, 19), Size = UDim2.new(1, -40, 0, 14), TextTruncate = Enum.TextTruncate.AtEnd })
+	self.TitleLabel = U.text({ Parent = brand, Text = self.Title, FontFace = F.Bold, TextSize = 15, Position = UDim2.fromOffset(40, 1), Size = UDim2.new(1, -40, 0, 18), TextTruncate = Enum.TextTruncate.AtEnd })
+	self.SubtitleLabel = U.text({ Parent = brand, Text = self.Subtitle, TextSize = 11, TextColor3 = T.Muted, Position = UDim2.fromOffset(40, 19), Size = UDim2.new(1, -40, 0, 14), TextTruncate = Enum.TextTruncate.AtEnd })
 
 	local profileH = o.HideProfile and 0 or 62
 	local list = U.new("ScrollingFrame", {
@@ -849,8 +879,30 @@ function Window:_BuildProfile(side)
 	})
 	U.round(av)
 	U.stroke(av, T.Accent, 0, 2)
-	U.text({ Parent = card, Text = lp and lp.DisplayName or "Player", FontFace = F.SemiBold, TextSize = 12, Position = UDim2.fromOffset(48, 8), Size = UDim2.new(1, -54, 0, 16), TextTruncate = Enum.TextTruncate.AtEnd })
-	U.text({ Parent = card, Text = lp and ("@" .. lp.Name) or "", TextSize = 10, TextColor3 = T.Muted, Position = UDim2.fromOffset(48, 25), Size = UDim2.new(1, -54, 0, 14), TextTruncate = Enum.TextTruncate.AtEnd })
+	local veil = U.new("Frame", { Parent = av, BackgroundColor3 = T.Elevated2, Size = UDim2.fromScale(1, 1), Visible = false })
+	U.round(veil)
+	U.new("UIGradient", { Parent = veil, Color = ColorSequence.new(T.Accent, T.Elevated2), Rotation = 45 })
+	local display = U.text({ Parent = card, FontFace = F.SemiBold, TextSize = 12, Position = UDim2.fromOffset(48, 8), Size = UDim2.new(1, -84, 0, 16), TextTruncate = Enum.TextTruncate.AtEnd })
+	local user = U.text({ Parent = card, TextSize = 10, TextColor3 = T.Muted, Position = UDim2.fromOffset(48, 25), Size = UDim2.new(1, -84, 0, 14), TextTruncate = Enum.TextTruncate.AtEnd })
+
+	-- eye button: hides avatar + names (for recording / screenshots)
+	local eye = U.button({ Parent = card, BackgroundColor3 = T.Elevated, AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8, 0.5, 0), Size = UDim2.fromOffset(26, 26) })
+	U.corner(eye, 7)
+	U.hover(eye, function() U.tween(eye, 0.12, { BackgroundTransparency = 0 }) end, function() U.tween(eye, 0.12, { BackgroundTransparency = 1 }) end)
+	U.onClick(eye, function() self:SetUserInfoHidden(not self.ProfileHidden) end)
+
+	local icon
+	self._applyProfile = function()
+		local hidden = self.ProfileHidden
+		local dn = lp and lp.DisplayName or "Player"
+		local un = lp and lp.Name or ""
+		display.Text = hidden and string.rep("•", math.min(#dn, 10)) or dn
+		user.Text = hidden and ("@" .. string.rep("•", math.min(#un, 10))) or ("@" .. un)
+		veil.Visible = hidden
+		if icon then icon:Destroy() end
+		icon = U.icon(hidden and "eyeoff" or "eye", eye, 14, hidden and T.Glow or T.Muted, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5) })
+	end
+	self._applyProfile()
 end
 
 function Window:_HeaderButton(name, kind)
@@ -908,11 +960,20 @@ function Window:_BuildHeader()
 	self.LangBtn = lang
 	table.insert(Tr.Listeners, function() self.LangLabel.Text = string.upper(Tr.Lang) end)
 
+	self.GearBtn = self:_HeaderButton("Settings", "sliders")
+	self.GearBtn.Visible = false
+	U.onClick(self.GearBtn, function() self:_GlobalPopup() end)
+
 	self.MinBtn = self:_HeaderButton("Minimize", "min")
 	U.onClick(self.MinBtn, function() self:SetVisible(false) end)
 	self.CloseBtn = self:_HeaderButton("Close", "close")
-	U.onClick(self.CloseBtn, function()
-		if not self.CloseConfirm then return self:Destroy() end
+	U.onClick(self.CloseBtn, function() self:Close() end)
+end
+
+-- asks before destroying (CloseConfirm = false skips the dialog)
+function Window:Close()
+	if not self.CloseConfirm then return self:Destroy() end
+	do
 		self:Dialog({
 			Title = "Close the interface?",
 			Content = "Everything will stop running. You'll need to execute the script again.",
@@ -921,7 +982,7 @@ function Window:_BuildHeader()
 				{ Name = "Close", Primary = true, Callback = function() self:Destroy() end },
 			},
 		})
-	end)
+	end
 end
 
 function Window:_BuildSearch()
@@ -1035,13 +1096,23 @@ end
 ---------------------------------------------------------------------------
 -- Window: layout / responsiveness
 ---------------------------------------------------------------------------
+-- current visual scale of the window (user scale × open animation)
+function Window:_S()
+	local s = self.Scale and self.Scale.Scale or 1
+	return s > 0 and s or 1
+end
+
 function Window:_Layout()
-	local scr = self.Gui.AbsoluteSize
-	if scr.X <= 0 then return end
+	local real = self.Gui.AbsoluteSize
+	if real.X <= 0 then return end
+	-- work in "design" pixels: the UIScale on the holder multiplies everything by UserScale
+	local us = self.UserScale
+	local scr = real / us
 	local w = math.max(300, math.min(self.Desired.X, scr.X - 16))
 	local h = math.max(240, math.min(self.Desired.Y, scr.Y - 16))
 	self.Holder.Size = UDim2.fromOffset(w, h)
 	self.Size = Vector2.new(w, h)
+	if not self._animating then self.Scale.Scale = us end
 
 	local compact = w < 640
 	if compact ~= self.Compact then self:_SetCompact(compact) end
@@ -1055,7 +1126,7 @@ function Window:_Layout()
 
 	local touchOnly = Svc.UserInputService.TouchEnabled and not Svc.UserInputService.MouseEnabled
 	self.Grip.Visible = not compact and not touchOnly
-	self.NotifyHolder.Size = UDim2.new(0, math.min(290, scr.X - 32), 1, -32)
+	self.NotifyHolder.Size = UDim2.new(0, math.min(290, real.X - 32), 1, -32)
 	self:_LayoutHeader()
 	self:_Place()
 	self:_ClampFloat()
@@ -1063,7 +1134,7 @@ end
 
 function Window:_Place()
 	local scr = self.Gui.AbsoluteSize
-	local size = self.Size or self.Desired
+	local size = (self.Size or self.Desired) * self.UserScale
 	local mx = math.max(0, (scr.X - size.X) / 2)
 	local my = math.max(0, (scr.Y - size.Y) / 2)
 	self.Offset = Vector2.new(math.clamp(self.Offset.X, -mx, mx), math.clamp(self.Offset.Y, -my, my))
@@ -1115,6 +1186,13 @@ function Window:_LayoutHeader()
 	right -= 40
 	self.LangBtn.Position = UDim2.fromOffset(right - 58, 10)
 	right -= 66
+	if #self._globals > 0 then
+		self.GearBtn.Visible = true
+		self.GearBtn.Position = UDim2.fromOffset(right - 32, 10)
+		right -= 40
+	else
+		self.GearBtn.Visible = false
+	end
 
 	local sf = self.SearchFrame
 	if compact then
@@ -1151,12 +1229,15 @@ function Window:_Watch(cont, row, fn)
 		local x = row.AbsoluteSize.X
 		if x > 0 and (force or x ~= last) then
 			last = x
-			fn(x)
+			fn(math.floor(x / self.UserScale + 0.5))
 		end
 	end
-	row:GetPropertyChangedSignal("AbsoluteSize"):Connect(function() run(false) end)
+	row:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+		if not self._animating then run(false) end
+	end)
 	table.insert(cont.Tab._relayouts, function() run(true) end)
 	task.defer(run, true)
+	return run
 end
 
 function Window:_RelayoutAll()
@@ -1184,18 +1265,38 @@ end
 -- Window: public API
 ---------------------------------------------------------------------------
 function Window:SetVisible(v, instant)
+	if self.Visible == v and self.Holder.Visible == v then return end
 	self.Visible = v
 	self:_ClosePopup()
 	if v then
 		self.Holder.Visible = true
 		if not instant then
-			self.Scale.Scale = 0.96
-			U.tween(self.Scale, 0.2, { Scale = 1 })
+			self._animating = true
+			self.Scale.Scale = self.UserScale * 0.96
+			U.tween(self.Scale, 0.2, { Scale = self.UserScale })
+			task.delay(0.22, function()
+				self._animating = false
+				self.Scale.Scale = self.UserScale
+			end)
 		end
 	else
 		self.Holder.Visible = false
+		if not instant and self.HideNotice and not self._noticeShown then
+			self._noticeShown = true -- once per session, so it doesn't nag
+			local how = self.Float and "Tap the floating button" or "Press the toggle key"
+			local key = self.Keybind and (" or press " .. self.Keybind.Name) or ""
+			self:Notify({ Title = "Interface hidden", Content = how .. key .. " to open it again.", Icon = "eyeoff" })
+		end
 	end
 end
+
+-- MacLib-style alias: HideUI(true) hides, HideUI(false) shows
+function Window:HideUI(state)
+	self:SetVisible(not state)
+end
+
+function Window:SetState(state) self:SetVisible(state) end
+function Window:GetState() return self.Visible end
 
 function Window:Toggle()
 	self:SetVisible(not self.Visible)
@@ -1213,6 +1314,13 @@ function Window:SetLanguage(code)
 end
 
 function Window:Destroy()
+	if self._destroyed then return end
+	self._destroyed = true
+	for _, fn in ipairs(self._unload) do pcall(fn) end
+	-- undo every world change the extras made
+	pcall(function() self:SetLowCpu(false) end)
+	pcall(function() self:SetFPSBoost(false) end)
+	pcall(function() self:SetHidePlayer(false) end)
 	for _, c in ipairs(self._conns) do pcall(function() c:Disconnect() end) end
 	self._conns = {}
 	pcall(function() self.Gui:Destroy() end)
@@ -1334,11 +1442,13 @@ function Window:_OpenPopup(anchor, width, height)
 	local pop = U.new("Frame", { Parent = ov, BackgroundColor3 = T.Surface, ZIndex = 2, ClipsDescendants = true })
 	U.corner(pop, 10)
 	U.stroke(pop, T.BorderHi)
-	local rel = anchor.AbsolutePosition - ov.AbsolutePosition
-	local area = ov.AbsoluteSize
+	local s = self:_S()
+	local rel = (anchor.AbsolutePosition - ov.AbsolutePosition) / s
+	local asz = anchor.AbsoluteSize / s
+	local area = ov.AbsoluteSize / s
 	height = math.min(height, area.Y - 16)
-	local x = math.clamp(rel.X + anchor.AbsoluteSize.X - width, 8, math.max(8, area.X - width - 8))
-	local y = rel.Y + anchor.AbsoluteSize.Y + 6
+	local x = math.clamp(rel.X + asz.X - width, 8, math.max(8, area.X - width - 8))
+	local y = rel.Y + asz.Y + 6
 	if y + height > area.Y - 8 then y = math.max(8, rel.Y - height - 6) end
 	pop.Size = UDim2.fromOffset(width, height)
 	pop.Position = UDim2.fromOffset(x, y - 6)
@@ -1410,14 +1520,16 @@ function Window:_Search(q)
 	end
 	local ov = self.Overlay
 	local sf = self.SearchFrame
-	local rel = sf.AbsolutePosition - ov.AbsolutePosition
-	local w = math.max(sf.AbsoluteSize.X, 240)
+	local s = self:_S()
+	local rel = (sf.AbsolutePosition - ov.AbsolutePosition) / s
+	local ssz = sf.AbsoluteSize / s
+	local w = math.max(ssz.X, 240)
 	local h = math.max(1, #found) * 38 + 8
 	local pop = U.new("Frame", {
 		Parent = ov,
 		BackgroundColor3 = T.Surface,
 		ZIndex = 3,
-		Position = UDim2.fromOffset(math.clamp(rel.X + sf.AbsoluteSize.X - w, 8, math.max(8, ov.AbsoluteSize.X - w - 8)), rel.Y + sf.AbsoluteSize.Y + 6),
+		Position = UDim2.fromOffset(math.clamp(rel.X + ssz.X - w, 8, math.max(8, ov.AbsoluteSize.X / s - w - 8)), rel.Y + ssz.Y + 6),
 		Size = UDim2.fromOffset(w, h),
 	})
 	U.corner(pop, 10)
@@ -1451,7 +1563,7 @@ function Window:_Reveal(e)
 		task.wait()
 		task.wait()
 		local page = e.tab.Page
-		local y = e.row.AbsolutePosition.Y - page.AbsolutePosition.Y + page.CanvasPosition.Y - 24
+		local y = (e.row.AbsolutePosition.Y - page.AbsolutePosition.Y) / self:_S() + page.CanvasPosition.Y - 24
 		U.tween(page, 0.35, { CanvasPosition = Vector2.new(0, math.max(0, y)) })
 		local st = e.row:FindFirstChild("NebulaHighlight") or U.stroke(e.row, T.Accent, 1, 2)
 		st.Name = "NebulaHighlight"
@@ -1467,6 +1579,9 @@ end
 ---------------------------------------------------------------------------
 function Window:Notify(o)
 	if type(o) == "string" then o = { Title = o } end
+	if not self.NotificationsEnabled and not o.Force then
+		return { Close = function() end }
+	end
 	local translate = o.Translate ~= false
 	local card = U.new("CanvasGroup", {
 		Parent = self.NotifyHolder,
@@ -1758,6 +1873,13 @@ local function element(row, o)
 	local e = { Row = row, Flag = o.Flag }
 	function e:SetVisible(v) row.Visible = v end
 	function e:Destroy() row:Destroy() end
+	function e:SetName(t)
+		local l = row:FindFirstChild("Title")
+		if l then Tr.Register(l, t) end
+	end
+	-- MacLib-style aliases
+	e.UpdateName = e.SetName
+	e.SetVisibility = e.SetVisible
 	return e
 end
 
@@ -1766,7 +1888,7 @@ end
 function U.inlineRow(cont, o, ctrlW, ctrlH, stackable)
 	local w = cont.Window
 	local row = cont:_NewRow(ctrlH)
-	local name = U.text({ Parent = row, FontFace = F.SemiBold, TextWrapped = true, TextYAlignment = Enum.TextYAlignment.Top })
+	local name = U.text({ Parent = row, Name = "Title", FontFace = F.SemiBold, TextWrapped = true, TextYAlignment = Enum.TextYAlignment.Top })
 	Tr.Register(name, o.Name or "")
 	local desc
 	if o.Description then
@@ -1774,7 +1896,9 @@ function U.inlineRow(cont, o, ctrlW, ctrlH, stackable)
 		Tr.Register(desc, o.Description)
 	end
 	local ctrl = U.new("Frame", { Parent = row, BackgroundTransparency = 1, Size = UDim2.fromOffset(ctrlW, ctrlH) })
-	w:_Watch(cont, row, function(W)
+	local run
+	name:GetPropertyChangedSignal("Text"):Connect(function() if run then run(true) end end)
+	run = w:_Watch(cont, row, function(W)
 		local avail = W - ctrlW - 12
 		local stacked = stackable and (U.measure(name.Text, 13).X * 1.07 > avail)
 		local tw = stacked and W or avail
@@ -1848,7 +1972,7 @@ function Container:Slider(o)
 	local suffix = o.Suffix or ""
 	local decimals = step < 1 and #(tostring(step):match("%.(%d+)") or "") or 0
 	local row = self:_NewRow(22)
-	local name = U.text({ Parent = row, FontFace = F.SemiBold, TextWrapped = true, TextYAlignment = Enum.TextYAlignment.Top })
+	local name = U.text({ Parent = row, Name = "Title", FontFace = F.SemiBold, TextWrapped = true, TextYAlignment = Enum.TextYAlignment.Top })
 	Tr.Register(name, o.Name or "")
 	local bar = U.button({ Parent = row, Size = UDim2.fromOffset(100, 22) })
 	local track = U.new("Frame", { Parent = bar, BackgroundColor3 = T.Border, AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.fromScale(0, 0.5), Size = UDim2.new(1, 0, 0, 6) })
@@ -1975,10 +2099,18 @@ function Container:Input(o)
 		if not silent then U.safe(o.Callback, e.Value) end
 	end
 	function e:Get() return e.Value end
-	if o.Numeric then
+	-- AcceptedCharacters: "All" | "Numeric" | "Alphabetic" | "AlphaNumeric" (Numeric = true also works)
+	local filters = { Numeric = "[^%d%.%-]", Alphabetic = "[^%a%s]", AlphaNumeric = "[^%w%s]" }
+	local pattern = filters[o.AcceptedCharacters or (o.Numeric and "Numeric") or "All"]
+	if pattern then
 		box:GetPropertyChangedSignal("Text"):Connect(function()
-			local clean = box.Text:gsub("[^%d%.%-]", "")
+			local clean = box.Text:gsub(pattern, "")
 			if clean ~= box.Text then box.Text = clean end
+		end)
+	end
+	if o.MaxLength then
+		box:GetPropertyChangedSignal("Text"):Connect(function()
+			if #box.Text > o.MaxLength then box.Text = box.Text:sub(1, o.MaxLength) end
 		end)
 	end
 	box.Focused:Connect(function() st.Color = T.Accent end)
@@ -1986,14 +2118,17 @@ function Container:Input(o)
 		st.Color = T.Border
 		if box.Text ~= e.Value then e:Set(box.Text) end
 	end)
-	if o.Live then
+	-- Changed (or Live = true): fires on every keystroke; Callback fires when focus is lost
+	local changedFn = o.Changed or o.onChanged or (o.Live and o.Callback)
+	if changedFn then
 		box:GetPropertyChangedSignal("Text"):Connect(function()
-			if box:IsFocused() then
-				e.Value = box.Text
-				U.safe(o.Callback, e.Value)
-			end
+			if box:IsFocused() then U.safe(changedFn, box.Text) end
 		end)
 	end
+	function e:SetPlaceholder(t) Tr.Register(box, t, "PlaceholderText") end
+	e.UpdatePlaceholder = e.SetPlaceholder
+	e.UpdateText = e.Set
+	e.GetInput = e.Get
 	e:Set(o.Default or "", true)
 	self.Window:_Flag(o.Flag, e)
 	return e
@@ -2011,7 +2146,7 @@ function Container:Dropdown(o)
 	U.hover(btn, function() st.Color = T.BorderHi end, function() st.Color = T.Border end)
 
 	local e = element(row, o)
-	e.Options = o.Options or {}
+	e.Options = table.clone(o.Options or {})
 	e.Multi = o.Multi == true
 	e.Value = e.Multi and {} or nil
 	local placeholder = o.Placeholder or (e.Multi and "None" or "Select…")
@@ -2047,7 +2182,7 @@ function Container:Dropdown(o)
 		if not silent then U.safe(o.Callback, e:Get()) end
 	end
 	function e:Refresh(opts, keep)
-		e.Options = opts or {}
+		e.Options = table.clone(opts or {})
 		if not keep then e.Value = e.Multi and {} or nil end
 		e._display()
 	end
@@ -2057,6 +2192,30 @@ function Container:Dropdown(o)
 		e._display()
 		U.safe(o.Callback, e:Get())
 	end
+	function e:GetOptions() return table.clone(e.Options) end
+	function e:IsOption(v) return table.find(e.Options, v) ~= nil end
+	function e:AddOptions(list)
+		for _, v in ipairs(type(list) == "table" and list or { list }) do
+			if not table.find(e.Options, v) then table.insert(e.Options, v) end
+		end
+		e._display()
+	end
+	function e:RemoveOptions(list)
+		for _, v in ipairs(type(list) == "table" and list or { list }) do
+			local i = table.find(e.Options, v)
+			if i then table.remove(e.Options, i) end
+			if e.Multi then e.Value[v] = nil elseif e.Value == v then e.Value = nil end
+		end
+		e._display()
+	end
+	function e:ClearOptions()
+		e.Options = {}
+		e.Value = e.Multi and {} or nil
+		e._display()
+	end
+	-- MacLib-style aliases
+	e.InsertOptions = e.AddOptions
+	e.UpdateSelection = e.Set
 	U.onClick(btn, function() w:_DropdownPopup(e, ctrl) end)
 	table.insert(Tr.Listeners, function() if row.Parent then e._display() end end)
 
@@ -2428,6 +2587,384 @@ function Container:Collapsible(o)
 	return c
 end
 
+---------------------------------------------------------------------------
+-- Window extras (ported from MacLib, made reversible)
+---------------------------------------------------------------------------
+function Window:SetScale(scale)
+	self.UserScale = math.clamp(tonumber(scale) or 1, 0.5, 1.5)
+	self.Settings.Scale = self.UserScale
+	self:_SaveSettings()
+	self.Scale.Scale = self.UserScale
+	self:_Layout()
+	task.defer(function() self:_RelayoutAll() end)
+end
+function Window:GetScale() return self.UserScale end
+
+function Window:SetSize(size)
+	if typeof(size) == "UDim2" then size = Vector2.new(size.X.Offset, size.Y.Offset) end
+	if typeof(size) ~= "Vector2" then return end
+	self.Desired = size
+	self:_Layout()
+end
+function Window:GetSize() return self.Desired end
+
+function Window:SetTitle(t)
+	self.Title = t
+	self.TitleLabel.Text = tostring(t)
+end
+function Window:SetSubtitle(t)
+	self.Subtitle = t
+	self.SubtitleLabel.Text = tostring(t)
+end
+Window.UpdateTitle = Window.SetTitle
+Window.UpdateSubtitle = Window.SetSubtitle
+
+function Window:SetNotificationsState(on)
+	self.NotificationsEnabled = on ~= false
+	self.Settings.Notifications = self.NotificationsEnabled
+	self:_SaveSettings()
+	self.NotifyHolder.Visible = self.NotificationsEnabled
+end
+function Window:GetNotificationsState() return self.NotificationsEnabled end
+
+-- hides avatar + names on the profile card (the eye button does the same)
+function Window:SetUserInfoHidden(hidden)
+	self.ProfileHidden = hidden == true
+	self.Settings.HideUserInfo = self.ProfileHidden
+	self:_SaveSettings()
+	if self._applyProfile then self._applyProfile() end
+	if self._profileToggle then self._profileToggle:Set(self.ProfileHidden, true) end
+end
+function Window:SetUserInfoState(shown) self:SetUserInfoHidden(not shown) end
+function Window:GetUserInfoState() return not self.ProfileHidden end
+
+function Window:OnUnload(fn)
+	if type(fn) == "function" then table.insert(self._unload, fn) end
+end
+Window.Unload = Window.Destroy
+
+-- Low CPU: stops 3D rendering and covers the game with a black screen (UI stays on top)
+function Window:SetLowCpu(on)
+	on = on == true
+	if on == (self._black ~= nil) then return end
+	pcall(function() Svc.RunService:Set3dRenderingEnabled(not on) end)
+	if on then
+		local g = U.new("ScreenGui", { Name = "NebulaBlackScreen", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 998 })
+		pcall(function() g.ScreenInsets = Enum.ScreenInsets.None end)
+		local f = U.new("Frame", { Parent = g, BackgroundColor3 = Color3.new(0, 0, 0), Size = UDim2.fromScale(1, 1) })
+		local l = U.text({ Parent = f, FontFace = F.SemiBold, TextSize = 14, TextColor3 = T.Faint, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(400, 20), TextXAlignment = Enum.TextXAlignment.Center })
+		Tr.Register(l, "Low CPU mode — rendering paused")
+		if pcall(U.guiParent, g) then self._black = g else g:Destroy() end
+	elseif self._black then
+		self._black:Destroy()
+		self._black = nil
+	end
+	if self._lowCpuToggle then self._lowCpuToggle:Set(on, true) end
+end
+Window.SetBlackScreen = Window.SetLowCpu
+
+-- FPS Boost: low quality, no shadows/effects, plain materials, hidden textures. Turning it off restores everything.
+function Window:SetFPSBoost(on)
+	on = on == true
+	if on == (self._fps ~= nil) then return end
+	if on then
+		local saved = { props = {} }
+		self._fps = saved
+		local function keep(inst, prop, value)
+			saved.props[inst] = saved.props[inst] or {}
+			if saved.props[inst][prop] == nil then saved.props[inst][prop] = inst[prop] end
+			inst[prop] = value
+		end
+		task.spawn(function()
+			pcall(function()
+				saved.quality = settings().Rendering.QualityLevel
+				settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+			end)
+			pcall(keep, Svc.Lighting, "GlobalShadows", false)
+			for _, x in ipairs(Svc.Lighting:GetDescendants()) do
+				if x:IsA("PostEffect") and x.Enabled then pcall(keep, x, "Enabled", false) end
+			end
+			for n, d in ipairs(workspace:GetDescendants()) do
+				if self._fps ~= saved then return end
+				if d:IsA("Texture") or d:IsA("Decal") then
+					if d.Transparency < 1 then pcall(keep, d, "Transparency", 1) end
+				elseif d:IsA("BasePart") then
+					if d.Material ~= Enum.Material.SmoothPlastic then pcall(keep, d, "Material", Enum.Material.SmoothPlastic) end
+					if d.CastShadow then pcall(keep, d, "CastShadow", false) end
+				elseif d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam") or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
+					if d.Enabled then pcall(keep, d, "Enabled", false) end
+				end
+				if n % 2500 == 0 then task.wait() end
+			end
+		end)
+	else
+		local saved = self._fps
+		self._fps = nil
+		pcall(function()
+			if saved.quality then settings().Rendering.QualityLevel = saved.quality end
+		end)
+		task.spawn(function()
+			local n = 0
+			for inst, props in pairs(saved.props) do
+				for prop, value in pairs(props) do pcall(function() inst[prop] = value end) end
+				n += 1
+				if n % 2500 == 0 then task.wait() end
+			end
+		end)
+	end
+	if self._fpsToggle then self._fpsToggle:Set(on, true) end
+end
+Window.FPSBoost = Window.SetFPSBoost
+
+-- Hide player: hides your name tags, face, accessories and clothes locally (for recording). Reversible.
+function Window:SetHidePlayer(on)
+	on = on == true
+	if on == (self._hidePlayer ~= nil) then return end
+	local lp = Svc.Players.LocalPlayer
+	if on then
+		local st = { saved = {} }
+		self._hidePlayer = st
+		local function keep(inst, prop, value)
+			if st.saved[inst] == nil then st.saved[inst] = { prop, inst[prop] } end
+			inst[prop] = value
+		end
+		local function apply(char)
+			if not char or self._hidePlayer ~= st then return end
+			for _, d in ipairs(char:GetDescendants()) do
+				if d:IsA("BillboardGui") or d:IsA("SurfaceGui") then
+					pcall(keep, d, "Enabled", false)
+				elseif d:IsA("Decal") then
+					pcall(keep, d, "Transparency", 1)
+				elseif d:IsA("Accessory") or d:IsA("Shirt") or d:IsA("Pants") or d:IsA("ShirtGraphic") then
+					pcall(keep, d, "Parent", nil)
+				end
+			end
+			local hum = char:FindFirstChildOfClass("Humanoid")
+			if hum then pcall(keep, hum, "DisplayDistanceType", Enum.HumanoidDisplayDistanceType.None) end
+		end
+		apply(lp and lp.Character)
+		if lp then
+			st.conn = lp.CharacterAdded:Connect(function(c)
+				task.wait(1)
+				apply(c)
+			end)
+		end
+	else
+		local st = self._hidePlayer
+		self._hidePlayer = nil
+		if st.conn then st.conn:Disconnect() end
+		for inst, rec in pairs(st.saved) do
+			pcall(function() inst[rec[1]] = rec[2] end)
+		end
+	end
+	if self._hidePlayerToggle then self._hidePlayerToggle:Set(on, true) end
+end
+Window.HidePlayer = Window.SetHidePlayer
+
+-- Global settings: quick switches behind the sliders button in the top bar
+function Window:GlobalSetting(o)
+	local g = { Name = o.Name or "Setting", Value = o.Default == true }
+	function g:Set(v, silent)
+		g.Value = v == true
+		if g._render then g._render() end
+		if not silent then U.safe(o.Callback, g.Value) end
+	end
+	function g:Get() return g.Value end
+	function g:UpdateState(v) g:Set(v, true) end
+	function g:UpdateName(n) g.Name = n end
+	table.insert(self._globals, g)
+	self:_LayoutHeader()
+	return g
+end
+
+function Window:_GlobalPopup()
+	local list = self._globals
+	local pop = self:_OpenPopup(self.GearBtn, 240, #list * 38 + 10)
+	U.pad(pop, 5)
+	U.list(pop, 2)
+	for i, g in ipairs(list) do
+		local b = U.button({ Parent = pop, BackgroundColor3 = T.Accent, Size = UDim2.new(1, 0, 0, 36), LayoutOrder = i })
+		U.corner(b, 7)
+		local l = U.text({ Parent = b, FontFace = F.Medium, TextSize = 12, Position = UDim2.fromOffset(10, 0), Size = UDim2.new(1, -60, 1, 0), TextTruncate = Enum.TextTruncate.AtEnd })
+		Tr.Register(l, g.Name)
+		local track = U.new("Frame", { Parent = b, BackgroundColor3 = T.Border, AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -10, 0.5, 0), Size = UDim2.fromOffset(30, 16) })
+		U.round(track)
+		local knob = U.new("Frame", { Parent = track, BackgroundColor3 = T.Muted, AnchorPoint = Vector2.new(0, 0.5), Size = UDim2.fromOffset(12, 12) })
+		U.round(knob)
+		g._render = function()
+			if not b.Parent then g._render = nil return end
+			U.tween(track, 0.15, { BackgroundColor3 = g.Value and T.Accent or T.Border })
+			U.tween(knob, 0.15, { Position = g.Value and UDim2.new(1, -14, 0.5, 0) or UDim2.new(0, 2, 0.5, 0), BackgroundColor3 = g.Value and T.White or T.Muted })
+			l.TextColor3 = g.Value and T.Text or T.Muted
+		end
+		knob.Position = g.Value and UDim2.new(1, -14, 0.5, 0) or UDim2.new(0, 2, 0.5, 0)
+		g._render()
+		U.hover(b, function() b.BackgroundTransparency = 0.92 end, function() b.BackgroundTransparency = 1 end)
+		U.onClick(b, function() g:Set(not g.Value) end)
+	end
+end
+
+-- Ready-made "Interface" section with every extra
+function Window:SettingsSection(tab, sectionName)
+	local s = tab:Section({ Name = sectionName or "Interface" })
+	s:Slider({ Name = "UI size", Min = 0.5, Max = 1.5, Step = 0.05, Default = self.UserScale, Suffix = "x", Callback = function(v) self:SetScale(v) end })
+	s:Keybind({ Name = "Toggle UI key", Default = self.Keybind, Changed = function(k) if k then self:SetKeybind(k) end end })
+	s:Toggle({ Name = "Notifications", Default = self.NotificationsEnabled, Callback = function(v) self:SetNotificationsState(v) end })
+	self._profileToggle = s:Toggle({ Name = "Hide my profile", Description = "Hides your avatar and name on the side panel", Default = self.ProfileHidden, Callback = function(v) self:SetUserInfoHidden(v) end })
+	s:Divider()
+	self._lowCpuToggle = s:Toggle({ Name = "Low CPU (black screen)", Description = "Stops 3D rendering. The interface stays visible.", Callback = function(v) self:SetLowCpu(v) end })
+	self._fpsToggle = s:Toggle({ Name = "FPS Boost", Description = "Lower graphics. Turning it off restores them.", Callback = function(v) self:SetFPSBoost(v) end })
+	self._hidePlayerToggle = s:Toggle({ Name = "Hide my character", Description = "Hides your name tag, face, clothes and accessories (only for you)", Callback = function(v) self:SetHidePlayer(v) end })
+	s:Divider()
+	s:Button({ Name = "Hide interface", Callback = function() self:SetVisible(false) end })
+	s:Button({ Name = "Close interface", Callback = function() self:Close() end })
+	return s
+end
+
+---------------------------------------------------------------------------
+-- More elements: Header, SubLabel, Spacer, Colorpicker
+---------------------------------------------------------------------------
+function Container:Header(o)
+	if type(o) == "string" then o = { Name = o } end
+	local row = self:_NewRow(18)
+	local l = U.text({ Parent = row, Name = "Title", FontFace = F.Bold, TextSize = 13, Size = UDim2.fromScale(1, 1), TextTruncate = Enum.TextTruncate.AtEnd })
+	Tr.Register(l, o.Name or o.Text or "")
+	self.Window:_Index(self, o.Name or o.Text, l, row)
+	local e = element(row, o)
+	e.Set = e.SetName
+	return e
+end
+
+function Container:SubLabel(o)
+	if type(o) == "string" then o = { Text = o } end
+	o.Size = o.Size or 11
+	o.Color = o.Color or T.Faint
+	return self:Label(o)
+end
+
+function Container:Spacer(h)
+	return element(self:_NewRow(type(h) == "number" and h or 6), {})
+end
+
+function Container:Colorpicker(o)
+	local w = self.Window
+	local row, ctrl = U.inlineRow(self, o, 52, 26, false)
+	local swatch = U.button({ Parent = ctrl, BackgroundTransparency = 0, Size = UDim2.fromScale(1, 1) })
+	U.corner(swatch, 7)
+	U.stroke(swatch, T.BorderHi, 0, 1.5)
+	local e = element(row, o)
+	local h, s, v = 0, 0, 1
+	local function current() return Color3.fromHSV(h, s, v) end
+
+	function e:Set(c, silent)
+		if type(c) == "string" then
+			local ok, parsed = pcall(Color3.fromHex, c)
+			c = ok and parsed or nil
+		end
+		if typeof(c) ~= "Color3" then return end
+		h, s, v = c:ToHSV()
+		e.Value = c
+		swatch.BackgroundColor3 = c
+		if e._sync then e._sync() end
+		if not silent then U.safe(o.Callback, c) end
+	end
+	function e:Get() return "#" .. e.Value:ToHex() end -- hex string so configs can save it
+	function e:GetColor() return e.Value end
+	e.SetColor = e.Set
+
+	local function open()
+		local pop = w:_OpenPopup(ctrl, 236, 200)
+		local sv = U.button({ Parent = pop, BackgroundColor3 = Color3.fromHSV(h, 1, 1), BackgroundTransparency = 0, Position = UDim2.fromOffset(10, 10), Size = UDim2.new(1, -20, 0, 120) })
+		U.corner(sv, 8)
+		local white = U.new("Frame", { Parent = sv, BackgroundColor3 = T.White, Size = UDim2.fromScale(1, 1) })
+		U.corner(white, 8)
+		U.new("UIGradient", { Parent = white, Transparency = NumberSequence.new(0, 1) })
+		local black = U.new("Frame", { Parent = sv, BackgroundColor3 = Color3.new(0, 0, 0), Size = UDim2.fromScale(1, 1) })
+		U.corner(black, 8)
+		U.new("UIGradient", { Parent = black, Rotation = 90, Transparency = NumberSequence.new(1, 0) })
+		local svKnob = U.new("Frame", { Parent = sv, BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(12, 12), ZIndex = 3 })
+		U.round(svKnob)
+		U.stroke(svKnob, T.White, 0, 2)
+
+		local hue = U.button({ Parent = pop, BackgroundColor3 = T.White, BackgroundTransparency = 0, Position = UDim2.fromOffset(10, 140), Size = UDim2.new(1, -20, 0, 12) })
+		U.round(hue)
+		local keys = {}
+		for i = 0, 6 do table.insert(keys, ColorSequenceKeypoint.new(i / 6, Color3.fromHSV((i / 6) % 1, 1, 1))) end
+		U.new("UIGradient", { Parent = hue, Color = ColorSequence.new(keys) })
+		local hueKnob = U.new("Frame", { Parent = hue, BackgroundColor3 = T.White, AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(6, 18) })
+		U.corner(hueKnob, 3)
+		U.stroke(hueKnob, T.Background, 0, 1)
+
+		local hex = U.new("TextBox", {
+			Parent = pop,
+			BackgroundColor3 = T.Background,
+			Position = UDim2.fromOffset(10, 162),
+			Size = UDim2.new(1, -20, 0, 28),
+			FontFace = F.SemiBold,
+			TextSize = 12,
+			TextColor3 = T.Text,
+			ClearTextOnFocus = false,
+			Text = "",
+		})
+		U.corner(hex, 7)
+		U.stroke(hex, T.Border)
+
+		local function sync()
+			sv.BackgroundColor3 = Color3.fromHSV(h, 1, 1)
+			svKnob.Position = UDim2.fromScale(s, 1 - v)
+			hueKnob.Position = UDim2.fromScale(h, 0.5)
+			if not hex:IsFocused() then hex.Text = "#" .. current():ToHex():upper() end
+		end
+		e._sync = sync
+		sync()
+
+		local mode, active
+		local inset = Svc.GuiService:GetGuiInset()
+		local function update(p)
+			local pos = Vector2.new(p.X, p.Y + inset.Y) -- input Y excludes the top bar; GUI Y doesn't
+			if mode == "sv" then
+				local rel = pos - sv.AbsolutePosition
+				s = math.clamp(rel.X / sv.AbsoluteSize.X, 0, 1)
+				v = 1 - math.clamp(rel.Y / sv.AbsoluteSize.Y, 0, 1)
+			else
+				h = math.clamp((pos.X - hue.AbsolutePosition.X) / hue.AbsoluteSize.X, 0, 0.999)
+			end
+			e.Value = current()
+			swatch.BackgroundColor3 = e.Value
+			sync()
+			U.safe(o.Callback, e.Value)
+		end
+		local function begin(m)
+			return function(i)
+				if not U.isPress(i) then return end
+				mode, active = m, i
+				update(i.Position)
+			end
+		end
+		sv.InputBegan:Connect(begin("sv"))
+		hue.InputBegan:Connect(begin("hue"))
+		local c1 = Svc.UserInputService.InputChanged:Connect(function(i)
+			if active and (i.UserInputType == Enum.UserInputType.MouseMovement or i == active) then update(i.Position) end
+		end)
+		local c2 = Svc.UserInputService.InputEnded:Connect(function(i)
+			if active and (i == active or i.UserInputType == Enum.UserInputType.MouseButton1) then active = nil end
+		end)
+		hex.FocusLost:Connect(function()
+			local t = hex.Text:gsub("[^%x]", "")
+			if #t == 6 then e:Set("#" .. t) else sync() end
+		end)
+		pop.Destroying:Connect(function()
+			c1:Disconnect()
+			c2:Disconnect()
+			e._sync = nil
+		end)
+	end
+	U.onClick(swatch, open)
+	e:Set(o.Default or T.Accent, true)
+	w:_Flag(o.Flag, e)
+	return e
+end
+
 -- ReorderList (numbered steps: drag by the grip, ↑ ↓, remove) -----------------
 -- Rows are placed by hand (no UIListLayout) so every move can be animated:
 -- the grabbed row lifts and follows the pointer, the others slide out of the way,
@@ -2582,7 +3119,7 @@ function Container:ReorderList(o)
 	w:_Connect(Svc.UserInputService.InputChanged, function(i)
 		if not drag then return end
 		if i.UserInputType ~= Enum.UserInputType.MouseMovement and i ~= drag.input then return end
-		local y = math.clamp(drag.base + (i.Position.Y - drag.y), -10, totalH() - ROW + 10)
+		local y = math.clamp(drag.base + (i.Position.Y - drag.y) / w:_S(), -10, totalH() - ROW + 10)
 		drag.r.frame.Position = UDim2.fromOffset(0, y)
 		local target = math.clamp(math.floor(y / STEP + 0.5) + 1, 1, #rows)
 		local cur = table.find(rows, drag.r)

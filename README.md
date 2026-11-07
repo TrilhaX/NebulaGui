@@ -52,6 +52,18 @@ local Window = Nebula:Window({
 | `Window:LoadAutoConfig()` | Call at the end of your script |
 | `Window:Destroy()` | Removes everything and disconnects all signals |
 | `Window.Flags[flag]` | Access any flagged element |
+| `Window:HideUI(bool)` / `SetState` / `GetState` | MacLib-style show/hide |
+| `Window:SetScale(0.5–1.5)` / `GetScale()` | UI size (saved) |
+| `Window:SetSize(Vector2)` / `SetTitle` / `SetSubtitle` | Window info |
+| `Window:SetNotificationsState(bool)` | Turns toasts on or off (saved) |
+| `Window:SetUserInfoHidden(bool)` / `SetUserInfoState(shown)` | Masks avatar + names (also the eye button on the profile card) |
+| `Window:SetLowCpu(bool)` | Stops 3D rendering + black screen, UI stays on top |
+| `Window:SetFPSBoost(bool)` | Lower graphics; `false` restores everything |
+| `Window:SetHidePlayer(bool)` | Hides your name tag, face, clothes and accessories locally; reversible |
+| `Window:GlobalSetting({ Name, Default, Callback })` | Switch in the top-bar quick menu; returns `:Set/:Get` |
+| `Window:SettingsSection(tab)` | Ready-made "Interface" section with all of the above |
+| `Window:Close()` | Asks, then destroys |
+| `Window:OnUnload(fn)` | Runs when the UI is destroyed (all extras are undone automatically) |
 
 ### Tab and Section
 
@@ -82,6 +94,14 @@ Every element is available on a `Section` and on a `Collapsible`. Elements that 
 | `Collapsible` | `Name, Open?` | returns a container that has every element above |
 | `ReorderList` | `Items, Flag, Callback(items), OnRemove(item, index)?` | `:Add(item)`, `:SetActive(index)` |
 | `Divider` | | |
+| `Header` | `Name` (or a string) | `:Set(text)` |
+| `SubLabel` | `Text` (or a string) | `:Set(text)` |
+| `Spacer` | height (number) | |
+| `Colorpicker` | `Name, Default (Color3), Flag, Callback(Color3)` | `:SetColor(c)`, `:GetColor()` (`:Get()` returns hex for configs) |
+
+`Input` also takes `AcceptedCharacters` (`"Numeric"`, `"Alphabetic"`, `"AlphaNumeric"`), `MaxLength` and `Changed(text)` for every keystroke.
+`Dropdown` also has `:AddOptions`, `:RemoveOptions`, `:ClearOptions`, `:GetOptions`, `:IsOption`.
+Every element has `:SetName(text)`; MacLib names (`UpdateName`, `SetVisibility`, `UpdateSelection`, `InsertOptions`, `UpdateText`, `GetInput`) work as aliases.
 
 Option names in `Segmented` are shown translated, but callbacks always receive the original value. Dropdown options and list items are never translated.
 
