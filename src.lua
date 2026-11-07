@@ -1,4 +1,4 @@
---!nocheck
+--!nonstrict
 --[[
 	NebulaGui
 	UI library for Roblox executor scripts — deep black & violet, nebula glow.
@@ -76,6 +76,77 @@ do
 end
 
 Nebula.Theme = T
+
+---------------------------------------------------------------------------
+-- Public option types (documentation + checked by Studio's type checker)
+---------------------------------------------------------------------------
+type Callback<T> = ((T) -> ())?
+
+export type WindowOptions = {
+	Title: string?,
+	Subtitle: string?,
+	Logo: (string | boolean)?,
+	Icons: { [string]: string | { string } }?,
+	Theme: { [string]: any }?,
+	Size: (Vector2 | UDim2)?,
+	MobileSize: (Vector2 | UDim2)?,
+	Folder: string?,
+	Keybind: EnumItem?,
+	Language: string?,
+	Scale: number?,
+	CloseConfirm: boolean?,
+	HideNotice: boolean?,
+	HideUserInfo: boolean?,
+	HideProfile: boolean?,
+	FloatingButton: boolean?,
+	FloatImage: string?,
+	StartHidden: boolean?,
+}
+
+-- fields every named row understands (Settings adds a gear that opens the side panel)
+type RowOptions = {
+	Name: string?,
+	Description: string?,
+	Flag: string?,
+	Settings: ((panel: any) -> ())?,
+	SettingsTitle: string?,
+}
+
+export type ToggleOptions = RowOptions & { Default: boolean?, Callback: Callback<boolean> }
+export type SliderOptions = RowOptions & {
+	Min: number?, Max: number?, Step: number?, Increment: number?, Default: number?, Suffix: string?,
+	Callback: Callback<number>,
+}
+export type InputOptions = RowOptions & {
+	Placeholder: string?, Default: string?, Width: number?, Numeric: boolean?, MaxLength: number?,
+	AcceptedCharacters: ("All" | "Numeric" | "Alphabetic" | "AlphaNumeric")?,
+	Live: boolean?, Changed: Callback<string>, onChanged: Callback<string>, Callback: Callback<string>,
+}
+export type DropdownOptions = RowOptions & {
+	Options: { any }?, Default: any, Multi: boolean?, Placeholder: string?, Width: number?,
+	Callback: Callback<any>,
+}
+export type ButtonOptions = { Name: string?, Primary: boolean?, Flag: string?, Callback: (() -> ())? }
+export type StepperOptions = RowOptions & { Min: number?, Max: number?, Step: number?, Default: number?, Callback: Callback<number> }
+export type SegmentedOptions = RowOptions & { Options: { any }?, Default: any, Width: number?, Callback: Callback<any> }
+export type KeybindOptions = RowOptions & { Default: (EnumItem | string)?, Callback: (() -> ())?, Changed: Callback<EnumItem?> }
+export type ColorpickerOptions = RowOptions & { Default: (Color3 | string)?, Callback: Callback<Color3> }
+export type LabelOptions = { Text: string?, Size: number?, Color: Color3?, Flag: string? }
+export type ParagraphOptions = { Title: string?, Content: string?, Flag: string? }
+export type ValueOptions = { Name: string?, Value: any, Flag: string? }
+export type CardOptions = { Title: string?, Image: string?, ImageSize: number?, Flag: string? }
+export type InfoBoxOptions = { Title: string?, Text: string?, Content: string?, Open: boolean?, Flag: string? }
+export type CollapsibleOptions = { Name: string?, Open: boolean? }
+export type GearOptions = { Name: string?, Description: string?, Title: string?, Build: ((panel: any) -> ())?, Settings: ((panel: any) -> ())?, Flag: string? }
+export type HeaderOptions = { Name: string?, Text: string?, Flag: string? }
+export type ReorderListOptions = { Items: { any }?, Flag: string?, Callback: Callback<{ any }>, OnRemove: ((item: any, index: number) -> ())? }
+export type TabOptions = { Name: string?, Icon: string? }
+export type SectionOptions = { Name: string?, Side: ("Left" | "Right")? }
+export type NotifyOptions = { Title: string?, Content: string?, Duration: number?, Icon: string?, Translate: boolean?, Force: boolean? }
+export type DialogButton = { Name: string?, Primary: boolean?, Callback: (() -> ())? }
+export type DialogOptions = { Title: string?, Content: string?, Buttons: { DialogButton }? }
+export type GlobalSettingOptions = { Name: string?, Default: boolean?, Callback: Callback<boolean> }
+export type PanelOptions = { Title: string?, Build: ((panel: any) -> ())?, Key: any, OnState: Callback<boolean> }
 
 ---------------------------------------------------------------------------
 -- File system (all optional — every call is guarded)
@@ -641,7 +712,7 @@ do
 	end
 
 	-- one Google request; returns the translated string or nil
-	local function googleRequest(lang, q)
+	local function googleRequest(lang: string, q: string): string?
 		local url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl="
 			.. lang .. "&dt=t&q=" .. Svc.HttpService:UrlEncode(q)
 		local ok, body = pcall(U.httpGet, url)
@@ -674,7 +745,7 @@ do
 		local function flush()
 			if #chunk == 0 then return end
 			local r = googleRequest(lang, table.concat(chunk, "\n"))
-			local lines = r and string.split(r, "\n") or {}
+			local lines = if r then string.split(r, "\n") else {}
 			if #lines == #chunk then
 				for i, s in ipairs(chunk) do cache[s] = trim(lines[i]) end
 			else
@@ -737,7 +808,7 @@ local SMALL_BTN = TOUCH and 30 or 26 -- small round buttons (stepper ±, eye, li
 local HEADER_H = 52
 local MIN_W, MIN_H = 260, 200
 
-function Nebula:Window(o)
+function Nebula:Window(o: WindowOptions?)
 	o = o or {}
 	if type(o.Icons) == "table" then
 		for k, v in pairs(o.Icons) do Nebula.Icons[k] = v end
@@ -1548,8 +1619,8 @@ function Window:SelectTab(tab)
 	task.defer(function() tab:_Relayout() end)
 end
 
-function Window:Tab(o)
-	if type(o) == "string" then o = { Name = o } end
+function Window:Tab(arg: string | TabOptions)
+	local o: TabOptions = if type(arg) == "string" then { Name = arg } else arg
 	local tab = setmetatable({ Window = self, Name = o.Name or "Tab", Sections = {}, _relayouts = {} }, Tab)
 	self._order += 1
 
@@ -1768,8 +1839,8 @@ end
 ---------------------------------------------------------------------------
 -- Notifications & dialogs
 ---------------------------------------------------------------------------
-function Window:Notify(o)
-	if type(o) == "string" then o = { Title = o } end
+function Window:Notify(arg: string | NotifyOptions)
+	local o: NotifyOptions = if type(arg) == "string" then { Title = arg } else arg
 	if not self.NotificationsEnabled and not o.Force then
 		return { Close = function() end }
 	end
@@ -1819,7 +1890,7 @@ function Window:Notify(o)
 	return { Close = close }
 end
 
-function Window:Dialog(o)
+function Window:Dialog(o: DialogOptions?)
 	o = o or {}
 	self:_ClosePopup()
 	if not self.Visible then self:SetVisible(true) end
@@ -2021,8 +2092,8 @@ function Tab:_Relayout()
 	end
 end
 
-function Tab:Section(o)
-	if type(o) == "string" then o = { Name = o } end
+function Tab:Section(arg: string | SectionOptions)
+	local o: SectionOptions = if type(arg) == "string" then { Name = arg } else arg
 	local idx = #self.Sections + 1
 	local side = o.Side or ((idx % 2 == 1) and "Left" or "Right")
 	local f = U.new("Frame", {
@@ -2149,7 +2220,7 @@ function U.inlineRow(cont, o, ctrlW, ctrlH, stackable)
 end
 
 -- Toggle ---------------------------------------------------------------------
-function Container:Toggle(o)
+function Container:Toggle(o: ToggleOptions)
 	local row, ctrl = U.inlineRow(self, o, 40, 22, false)
 	local hit = U.button({ Parent = row, Size = UDim2.fromScale(1, 1), ZIndex = 0 })
 	local track = U.new("Frame", { Parent = ctrl, BackgroundColor3 = T.Border, Size = UDim2.fromScale(1, 1) })
@@ -2184,7 +2255,7 @@ function Container:Toggle(o)
 end
 
 -- Slider ---------------------------------------------------------------------
-function Container:Slider(o)
+function Container:Slider(o: SliderOptions)
 	local w = self.Window
 	local min, max = o.Min or 0, o.Max or 100
 	local step = o.Step or o.Increment or 1
@@ -2291,7 +2362,7 @@ function Container:Slider(o)
 end
 
 -- Input ----------------------------------------------------------------------
-function Container:Input(o)
+function Container:Input(o: InputOptions)
 	local row, ctrl = U.inlineRow(self, o, o.Width or 170, 30, true)
 	local box = U.new("TextBox", {
 		Parent = ctrl,
@@ -2354,7 +2425,7 @@ function Container:Input(o)
 end
 
 -- Dropdown -------------------------------------------------------------------
-function Container:Dropdown(o)
+function Container:Dropdown(o: DropdownOptions)
 	local w = self.Window
 	local row, ctrl = U.inlineRow(self, o, o.Width or 160, 32, true)
 	local btn = U.button({ Parent = ctrl, BackgroundColor3 = T.Background, BackgroundTransparency = 0, Size = UDim2.fromScale(1, 1) })
@@ -2515,7 +2586,7 @@ function Window:_DropdownPopup(e, anchor)
 end
 
 -- Button ---------------------------------------------------------------------
-function Container:Button(o)
+function Container:Button(o: ButtonOptions)
 	local row = self:_NewRow(o.Primary and 38 or 34)
 	local primary = o.Primary == true
 	local b = U.button({
@@ -2549,7 +2620,7 @@ function Container:Button(o)
 end
 
 -- Stepper (− value +) --------------------------------------------------------
-function Container:Stepper(o)
+function Container:Stepper(o: StepperOptions)
 	local min, max = o.Min or -math.huge, o.Max or math.huge
 	local step = o.Step or 1
 	local decimals = step < 1 and #(tostring(step):match("%.(%d+)") or "") or 0
@@ -2596,7 +2667,7 @@ function Container:Stepper(o)
 end
 
 -- Segmented (A | B | C) ------------------------------------------------------
-function Container:Segmented(o)
+function Container:Segmented(o: SegmentedOptions)
 	local opts = o.Options or {}
 	local n = math.max(#opts, 1)
 	local cw = o.Width or math.clamp(n * 76, 120, 240)
@@ -2630,7 +2701,7 @@ function Container:Segmented(o)
 end
 
 -- Keybind --------------------------------------------------------------------
-function Container:Keybind(o)
+function Container:Keybind(o: KeybindOptions)
 	local w = self.Window
 	local row, ctrl = U.inlineRow(self, o, 92, 30, false)
 	local b = U.button({ Parent = ctrl, BackgroundColor3 = T.Background, BackgroundTransparency = 0, Size = UDim2.fromScale(1, 1), FontFace = F.SemiBold, TextSize = 12, TextColor3 = T.Glow, TextTruncate = Enum.TextTruncate.AtEnd })
@@ -2670,8 +2741,8 @@ function Container:Keybind(o)
 end
 
 -- Text elements --------------------------------------------------------------
-function Container:Label(o)
-	if type(o) == "string" then o = { Text = o } end
+function Container:Label(arg: string | LabelOptions)
+	local o: LabelOptions = if type(arg) == "string" then { Text = arg } else arg
 	local row = self:_NewRow(0)
 	row.AutomaticSize = Enum.AutomaticSize.Y
 	local l = U.text({ Parent = row, TextSize = o.Size or 12, TextColor3 = o.Color or T.Muted, TextWrapped = true, RichText = true, Size = UDim2.fromScale(1, 0), AutomaticSize = Enum.AutomaticSize.Y })
@@ -2681,7 +2752,7 @@ function Container:Label(o)
 	return e
 end
 
-function Container:Paragraph(o)
+function Container:Paragraph(o: ParagraphOptions)
 	local row = self:_NewRow(0)
 	row.AutomaticSize = Enum.AutomaticSize.Y
 	U.list(row, 3)
@@ -2698,7 +2769,7 @@ function Container:Paragraph(o)
 	return e
 end
 
-function Container:Value(o)
+function Container:Value(o: ValueOptions)
 	local row = self:_NewRow(20)
 	local n = U.text({ Parent = row, TextSize = 12, TextColor3 = T.Muted, Size = UDim2.new(0.6, 0, 1, 0), TextTruncate = Enum.TextTruncate.AtEnd })
 	Tr.Register(n, o.Name or "")
@@ -2718,7 +2789,7 @@ function Container:Divider()
 end
 
 -- Card (title + image, e.g. unit preview) -----------------------------------
-function Container:Card(o)
+function Container:Card(o: CardOptions)
 	local row = self:_NewRow(0)
 	row.AutomaticSize = Enum.AutomaticSize.Y
 	local card = U.new("Frame", { Parent = row, BackgroundColor3 = T.Surface, Size = UDim2.fromScale(1, 0), AutomaticSize = Enum.AutomaticSize.Y })
@@ -2741,7 +2812,7 @@ function Container:Card(o)
 end
 
 -- InfoBox (collapsible help text) -------------------------------------------
-function Container:InfoBox(o)
+function Container:InfoBox(o: InfoBoxOptions)
 	local row = self:_NewRow(0)
 	row.AutomaticSize = Enum.AutomaticSize.Y
 	local box = U.new("Frame", { Parent = row, BackgroundColor3 = T.Surface, Size = UDim2.fromScale(1, 0), AutomaticSize = Enum.AutomaticSize.Y })
@@ -2776,7 +2847,7 @@ function Container:InfoBox(o)
 end
 
 -- Collapsible (sub-group with violet guide line) ------------------------------
-function Container:Collapsible(o)
+function Container:Collapsible(o: CollapsibleOptions)
 	local w = self.Window
 	local row = self:_NewRow(0)
 	row.AutomaticSize = Enum.AutomaticSize.Y
@@ -2984,7 +3055,7 @@ end
 Window.HidePlayer = Window.SetHidePlayer
 
 -- Global settings: quick switches behind the sliders button in the top bar
-function Window:GlobalSetting(o)
+function Window:GlobalSetting(o: GlobalSettingOptions)
 	local g = { Name = o.Name or "Setting", Value = o.Default == true }
 	function g:Set(v, silent)
 		g.Value = v == true
@@ -3047,8 +3118,8 @@ end
 ---------------------------------------------------------------------------
 -- More elements: Header, SubLabel, Spacer, Colorpicker
 ---------------------------------------------------------------------------
-function Container:Header(o)
-	if type(o) == "string" then o = { Name = o } end
+function Container:Header(arg: string | HeaderOptions)
+	local o: HeaderOptions = if type(arg) == "string" then { Name = arg } else arg
 	local row = self:_NewRow(18)
 	local l = U.text({ Parent = row, Name = "Title", FontFace = F.Bold, TextSize = 13, Size = UDim2.fromScale(1, 1), TextTruncate = Enum.TextTruncate.AtEnd })
 	Tr.Register(l, o.Name or o.Text or "")
@@ -3058,18 +3129,16 @@ function Container:Header(o)
 	return e
 end
 
-function Container:SubLabel(o)
-	if type(o) == "string" then o = { Text = o } end
-	o.Size = o.Size or 11
-	o.Color = o.Color or T.Faint
-	return self:Label(o)
+function Container:SubLabel(arg: string | LabelOptions)
+	local src: LabelOptions = if type(arg) == "string" then { Text = arg } else arg
+	return self:Label({ Text = src.Text, Size = src.Size or 11, Color = src.Color or T.Faint })
 end
 
-function Container:Spacer(h)
+function Container:Spacer(h: number?)
 	return element(self:_NewRow(type(h) == "number" and h or 6), {})
 end
 
-function Container:Colorpicker(o)
+function Container:Colorpicker(o: ColorpickerOptions)
 	local w = self.Window
 	local row, ctrl = U.inlineRow(self, o, 52, 26, false)
 	local swatch = U.button({ Parent = ctrl, BackgroundTransparency = 0, Size = UDim2.fromScale(1, 1) })
@@ -3294,7 +3363,7 @@ function Window:_PlacePanel(p)
 end
 
 -- Window:OpenPanel({ Title, Build = function(panel) panel:Toggle(...) end })
-function Window:OpenPanel(o)
+function Window:OpenPanel(o: PanelOptions)
 	self._panels = self._panels or {}
 	local key = o.Key or o
 	local p = self._panels[key]
@@ -3327,7 +3396,7 @@ end
 
 -- New option type: a row with a gear that opens the side panel
 -- Container:Gear({ Name, Description?, Title?, Build = function(panel) ... end })
-function Container:Gear(o)
+function Container:Gear(o: GearOptions)
 	local w = self.Window
 	local row, ctrl = U.inlineRow(self, { Name = o.Name, Description = o.Description }, 28, 28, false)
 	local b, toggle, key = U.gearButton(w, ctrl, { Title = o.Title or o.Name, Build = o.Build or o.Settings })
@@ -3344,7 +3413,7 @@ end
 -- Rows are placed by hand (no UIListLayout) so every move can be animated:
 -- the grabbed row lifts and follows the pointer, the others slide out of the way,
 -- and on release it snaps into its slot with a small bounce.
-function Container:ReorderList(o)
+function Container:ReorderList(o: ReorderListOptions)
 	local w = self.Window
 	local ROW, GAP = TOUCH and 44 or 40, 6
 	local A = TOUCH and 28 or 22 -- arrow button size

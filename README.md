@@ -114,6 +114,10 @@ Every element has `:SetName(text)`; MacLib names (`UpdateName`, `SetVisibility`,
 
 Option names in `Segmented` are shown translated, but callbacks always receive the original value. Dropdown options and list items are never translated.
 
+## Types
+
+`src.lua` runs in `--!nonstrict` and exports option types for every constructor (`WindowOptions`, `ToggleOptions`, `SliderOptions`, `DropdownOptions`…), so Studio's type checker flags misspelled or wrong-typed options inside the library. Scripts that load it with `loadstring` don't receive these types — that's a Luau limitation, not a missing feature.
+
 ## Theme
 
 | Token | Hex |
