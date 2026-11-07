@@ -1302,8 +1302,16 @@ function Window:Tab(o)
 		ScrollBarImageColor3 = T.Accent,
 		Visible = false,
 	})
-	U.pad(page, 16, 18, 18, 18)
-	local cols = U.new("Frame", { Parent = page, BackgroundTransparency = 1, Size = UDim2.fromScale(1, 0), AutomaticSize = Enum.AutomaticSize.Y })
+	-- side padding is done with offsets, not UIPadding: in a ScrollingFrame an
+	-- AutomaticSize child ignores the padding width and overflows on the right
+	U.new("UIPadding", { Parent = page, PaddingBottom = UDim.new(0, 18) })
+	local cols = U.new("Frame", {
+		Parent = page,
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(18, 16),
+		Size = UDim2.new(1, -36, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+	})
 	tab.Page = page
 	tab.Left = U.new("Frame", { Parent = cols, BackgroundTransparency = 1, AutomaticSize = Enum.AutomaticSize.Y })
 	tab.Right = U.new("Frame", { Parent = cols, BackgroundTransparency = 1, AutomaticSize = Enum.AutomaticSize.Y })
@@ -2244,7 +2252,7 @@ end
 function Container:Keybind(o)
 	local w = self.Window
 	local row, ctrl = U.inlineRow(self, o, 92, 30, false)
-	local b = U.button({ Parent = ctrl, BackgroundColor3 = T.Background, BackgroundTransparency = 0, Size = UDim2.fromScale(1, 1), FontFace = F.SemiBold, TextSize = 12, TextColor3 = T.Glow })
+	local b = U.button({ Parent = ctrl, BackgroundColor3 = T.Background, BackgroundTransparency = 0, Size = UDim2.fromScale(1, 1), FontFace = F.SemiBold, TextSize = 12, TextColor3 = T.Glow, TextTruncate = Enum.TextTruncate.AtEnd })
 	U.corner(b, 8)
 	local st = U.stroke(b, T.Border)
 	local e = element(row, o)
@@ -2252,7 +2260,12 @@ function Container:Keybind(o)
 	function e:Set(v, silent)
 		if type(v) == "string" then v = Enum.KeyCode[v] end
 		e.Value = v
-		b.Text = v and v.Name or "—"
+		local short = {
+			LeftControl = "LCtrl", RightControl = "RCtrl", LeftShift = "LShift", RightShift = "RShift",
+			LeftAlt = "LAlt", RightAlt = "RAlt", Return = "Enter", Backspace = "Bksp",
+			PageUp = "PgUp", PageDown = "PgDn", Insert = "Ins", Delete = "Del",
+		}
+		b.Text = v and (short[v.Name] or v.Name) or "—"
 		if not silent and o.Changed then U.safe(o.Changed, v) end
 	end
 	function e:Get() return e.Value and e.Value.Name or nil end
@@ -2415,34 +2428,58 @@ function Container:Collapsible(o)
 	return c
 end
 
--- ReorderList (numbered steps with drag, ↑ ↓ and remove) ----------------------
+-- ReorderList (numbered steps: drag by the grip, ↑ ↓, remove) -----------------
+-- Rows are placed by hand (no UIListLayout) so every move can be animated:
+-- the grabbed row lifts and follows the pointer, the others slide out of the way,
+-- and on release it snaps into its slot with a small bounce.
 function Container:ReorderList(o)
 	local w = self.Window
+	local ROW, GAP = 40, 6
+	local STEP = ROW + GAP
 	local row = self:_NewRow(0)
-	row.AutomaticSize = Enum.AutomaticSize.Y
-	local list = U.new("Frame", { Parent = row, BackgroundTransparency = 1, Size = UDim2.fromScale(1, 0), AutomaticSize = Enum.AutomaticSize.Y })
-	U.list(list, 6)
+	local list = U.new("Frame", { Parent = row, BackgroundTransparency = 1, Size = UDim2.fromScale(1, 0) })
 	local e = element(row, o)
 	e.Items = {}
 	local rows = {}
 	local drag
+	local narrow = false
 
-	local function renumber()
-		for i, r in ipairs(rows) do
-			local active = e.Active == i
-			r.frame.LayoutOrder = i
-			r.num.Text = tostring(i)
-			r.badge.BackgroundColor3 = active and T.Accent or T.Elevated2
-			r.num.TextColor3 = active and T.White or T.Glow
-			r.stroke.Color = (active or (drag and drag.r == r)) and T.Accent or T.Border
-		end
+	local function totalH()
+		return #rows > 0 and (#rows * STEP - GAP) or 0
 	end
+
+	local function paint(r, i)
+		local lit = e.Active == i or (drag and drag.r == r)
+		r.num.Text = tostring(i)
+		U.tween(r.badge, 0.15, { BackgroundColor3 = lit and T.Accent or T.Elevated2 })
+		r.num.TextColor3 = lit and T.White or T.Glow
+		r.stroke.Color = lit and T.Accent or T.Border
+	end
+
+	local function layout(instant)
+		for i, r in ipairs(rows) do
+			paint(r, i)
+			if not (drag and drag.r == r) then
+				local target = UDim2.fromOffset(0, (i - 1) * STEP)
+				if instant then
+					r.frame.Position = target
+				else
+					U.tween(r.frame, 0.24, { Position = target }, Enum.EasingStyle.Quint)
+				end
+			end
+		end
+		local h = totalH()
+		list.Size = UDim2.new(1, 0, 0, h)
+		row.Size = UDim2.new(1, 0, 0, h)
+	end
+
 	local function changed()
 		e.Items = {}
 		for i, r in ipairs(rows) do e.Items[i] = r.value end
-		renumber()
+		layout(false)
 		U.safe(o.Callback, table.clone(e.Items))
 	end
+
 	local function move(r, delta)
 		local i = table.find(rows, r)
 		local j = i and i + delta
@@ -2452,41 +2489,92 @@ function Container:ReorderList(o)
 		changed()
 	end
 
+	local function applyWidth(r)
+		r.rm.Size = UDim2.fromOffset(narrow and 24 or 70, 22)
+		r.rmText.Visible = not narrow
+		r.rmIcon.Visible = narrow
+		r.label.Size = UDim2.new(1, -58 - (narrow and 88 or 134), 1, 0)
+	end
+
 	local function small(parent, kind, x)
-		local b = U.button({ Parent = parent, AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, x, 0.5, 0), Size = UDim2.fromOffset(22, 22) })
-		U.icon(kind, b, 11, T.Muted, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5) })
+		local b = U.button({ Parent = parent, BackgroundColor3 = T.Elevated2, AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, x, 0.5, 0), Size = UDim2.fromOffset(22, 22) })
+		U.corner(b, 6)
+		local ic = U.icon(kind, b, 11, T.Muted, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5) })
+		U.hover(b, function()
+			U.tween(b, 0.12, { BackgroundTransparency = 0.2 })
+			U.iconColor(ic, T.Glow)
+		end, function()
+			U.tween(b, 0.12, { BackgroundTransparency = 1 })
+			U.iconColor(ic, T.Muted)
+		end)
 		return b
 	end
 
-	local function makeRow(value)
-		local fr = U.new("Frame", { Parent = list, BackgroundColor3 = T.Surface, Size = UDim2.new(1, 0, 0, 40) })
+	local function lift(r, on)
+		U.tween(r.scale, on and 0.18 or 0.35, { Scale = on and 1.035 or 1 }, on and Enum.EasingStyle.Quart or Enum.EasingStyle.Back)
+		U.tween(r.frame, 0.18, { BackgroundColor3 = on and T.Elevated2 or T.Surface })
+		U.tween(r.stroke, 0.18, { Thickness = on and 1.6 or 1 })
+		r.frame.ZIndex = on and 3 or 1
+		U.iconColor(r.gripIcon, on and T.Glow or T.Faint)
+	end
+
+	local function makeRow(value, index)
+		local fr = U.new("Frame", {
+			Parent = list,
+			BackgroundColor3 = T.Surface,
+			Position = UDim2.fromOffset(0, (index - 1) * STEP),
+			Size = UDim2.new(1, 0, 0, ROW),
+		})
 		U.corner(fr, 9)
-		local r = { frame = fr, value = value, stroke = U.stroke(fr, T.Border) }
-		local grip = U.button({ Parent = fr, Position = UDim2.fromOffset(2, 0), Size = UDim2.new(0, 22, 1, 0) })
-		U.icon("grip", grip, 12, T.Faint, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5) })
-		r.badge = U.new("Frame", { Parent = fr, BackgroundColor3 = T.Elevated2, Position = UDim2.new(0, 28, 0.5, -11), Size = UDim2.fromOffset(22, 22) })
+		local r = { frame = fr, value = value, stroke = U.stroke(fr, T.Border), scale = U.new("UIScale", { Parent = fr }) }
+
+		local grip = U.button({ Parent = fr, Position = UDim2.fromOffset(2, 0), Size = UDim2.new(0, 24, 1, 0) })
+		r.gripIcon = U.icon("grip", grip, 12, T.Faint, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5) })
+		U.hover(grip, function()
+			if not drag then U.iconColor(r.gripIcon, T.Glow) end
+		end, function()
+			if not drag then U.iconColor(r.gripIcon, T.Faint) end
+		end)
+
+		r.badge = U.new("Frame", { Parent = fr, BackgroundColor3 = T.Elevated2, Position = UDim2.new(0, 30, 0.5, -11), Size = UDim2.fromOffset(22, 22) })
 		U.corner(r.badge, 6)
 		r.num = U.text({ Parent = r.badge, FontFace = F.Bold, TextSize = 11, Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center })
-		U.text({ Parent = fr, Text = tostring(value), FontFace = F.SemiBold, TextSize = 12, Position = UDim2.fromOffset(58, 0), Size = UDim2.new(1, -190, 1, 0), TextTruncate = Enum.TextTruncate.AtEnd })
-		local rm = U.button({ Parent = fr, BackgroundColor3 = T.Danger, BackgroundTransparency = 0.85, AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -56, 0.5, 0), Size = UDim2.fromOffset(70, 22), FontFace = F.Bold, TextSize = 11, TextColor3 = T.DangerText })
-		U.corner(rm, 6)
-		Tr.Register(rm, "Remove")
-		U.onClick(small(fr, "up", -30), function() move(r, -1) end)
+		r.label = U.text({ Parent = fr, Text = tostring(value), FontFace = F.SemiBold, TextSize = 12, Position = UDim2.fromOffset(60, 0), TextTruncate = Enum.TextTruncate.AtEnd })
+
+		r.rm = U.button({ Parent = fr, BackgroundColor3 = T.Danger, BackgroundTransparency = 0.85, AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -58, 0.5, 0) })
+		U.corner(r.rm, 6)
+		r.rmText = U.text({ Parent = r.rm, FontFace = F.Bold, TextSize = 11, TextColor3 = T.DangerText, Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center })
+		Tr.Register(r.rmText, "Remove")
+		r.rmIcon = U.icon("close", r.rm, 9, T.DangerText, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5) })
+		U.hover(r.rm, function() U.tween(r.rm, 0.12, { BackgroundTransparency = 0.7 }) end, function() U.tween(r.rm, 0.12, { BackgroundTransparency = 0.85 }) end)
+		applyWidth(r)
+
+		U.onClick(small(fr, "up", -32), function() move(r, -1) end)
 		U.onClick(small(fr, "down", -6), function() move(r, 1) end)
-		U.onClick(rm, function()
+		U.onClick(r.rm, function()
 			local i = table.find(rows, r)
-			if not i then return end
+			if not i or r.removing then return end
+			r.removing = true
 			table.remove(rows, i)
-			fr:Destroy()
 			if e.Active and e.Active > #rows then e.Active = nil end
+			U.tween(r.scale, 0.18, { Scale = 0.85 })
+			U.tween(fr, 0.18, { BackgroundTransparency = 1 })
+			U.tween(r.stroke, 0.18, { Transparency = 1 })
+			for _, d in ipairs(fr:GetDescendants()) do
+				if d:IsA("GuiObject") then d.Visible = false end
+			end
+			task.delay(0.18, function() fr:Destroy() end)
 			U.safe(o.OnRemove, value, i)
 			changed()
 		end)
+
 		grip.InputBegan:Connect(function(i)
-			if not U.isPress(i) then return end
-			drag = { r = r, input = i, y = i.Position.Y, from = table.find(rows, r) }
+			if not U.isPress(i) or drag then return end
+			local from = table.find(rows, r)
+			drag = { r = r, input = i, y = i.Position.Y, base = (from - 1) * STEP }
 			self.Tab.Page.ScrollingEnabled = false
-			renumber()
+			lift(r, true)
+			layout(false)
 		end)
 		return r
 	end
@@ -2494,38 +2582,55 @@ function Container:ReorderList(o)
 	w:_Connect(Svc.UserInputService.InputChanged, function(i)
 		if not drag then return end
 		if i.UserInputType ~= Enum.UserInputType.MouseMovement and i ~= drag.input then return end
-		local target = math.clamp(drag.from + math.floor((i.Position.Y - drag.y) / 46 + 0.5), 1, #rows)
+		local y = math.clamp(drag.base + (i.Position.Y - drag.y), -10, totalH() - ROW + 10)
+		drag.r.frame.Position = UDim2.fromOffset(0, y)
+		local target = math.clamp(math.floor(y / STEP + 0.5) + 1, 1, #rows)
 		local cur = table.find(rows, drag.r)
 		if cur and target ~= cur then
 			table.remove(rows, cur)
 			table.insert(rows, target, drag.r)
-			renumber()
+			layout(false)
 		end
 	end)
 	w:_Connect(Svc.UserInputService.InputEnded, function(i)
-		if drag and (i == drag.input or i.UserInputType == Enum.UserInputType.MouseButton1) then
-			drag = nil
-			self.Tab.Page.ScrollingEnabled = true
-			changed()
-		end
+		if not drag or not (i == drag.input or i.UserInputType == Enum.UserInputType.MouseButton1) then return end
+		local r = drag.r
+		drag = nil
+		self.Tab.Page.ScrollingEnabled = true
+		lift(r, false)
+		local idx = table.find(rows, r) or 1
+		U.tween(r.frame, 0.35, { Position = UDim2.fromOffset(0, (idx - 1) * STEP) }, Enum.EasingStyle.Back)
+		changed()
+	end)
+
+	w:_Watch(self, row, function(W)
+		local n = W < 330
+		if n == narrow then return end
+		narrow = n
+		for _, r in ipairs(rows) do applyWidth(r) end
 	end)
 
 	function e:Set(items, silent)
 		for _, r in ipairs(rows) do r.frame:Destroy() end
 		rows = {}
-		for _, v in ipairs(type(items) == "table" and items or {}) do table.insert(rows, makeRow(v)) end
-		e.Items = table.clone(type(items) == "table" and items or {})
-		renumber()
+		drag = nil
+		items = type(items) == "table" and items or {}
+		for i, v in ipairs(items) do table.insert(rows, makeRow(v, i)) end
+		e.Items = table.clone(items)
+		layout(true)
 		if not silent then U.safe(o.Callback, table.clone(e.Items)) end
 	end
 	function e:Get() return table.clone(e.Items) end
 	function e:Add(v)
-		table.insert(rows, makeRow(v))
+		local r = makeRow(v, #rows + 1)
+		table.insert(rows, r)
+		r.scale.Scale = 0.9
+		U.tween(r.scale, 0.3, { Scale = 1 }, Enum.EasingStyle.Back)
 		changed()
 	end
 	function e:SetActive(i)
 		e.Active = i
-		renumber()
+		layout(false)
 	end
 	e:Set(o.Items or {}, true)
 	w:_Flag(o.Flag, e)
