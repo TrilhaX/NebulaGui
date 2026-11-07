@@ -1011,21 +1011,26 @@ function Window:_BuildProfile(side)
 	self._applyProfile()
 end
 
-function Window:_HeaderButton(name, kind)
+-- solid = filled background + bright icon (used where the icon image is dark/thin)
+function Window:_HeaderButton(name, kind, solid)
 	local b = U.button({
 		Parent = self.Header,
 		Name = name,
 		BackgroundColor3 = T.Elevated,
+		BackgroundTransparency = solid and 0 or 1,
 		Size = UDim2.fromOffset(32, 32),
 	})
 	U.corner(b, 8)
-	local ic = U.icon(kind, b, 14, T.Muted, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5) })
+	if solid then U.stroke(b, T.Border) end
+	local idle = solid and T.Text or T.Muted
+	local hot = solid and T.Glow or T.Text
+	local ic = U.icon(kind, b, solid and 16 or 14, idle, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5) })
 	U.hover(b, function()
-		U.tween(b, 0.15, { BackgroundTransparency = 0 })
-		U.iconColor(ic, T.Text)
+		if not solid then U.tween(b, 0.15, { BackgroundTransparency = 0 }) end
+		U.iconColor(ic, hot)
 	end, function()
-		U.tween(b, 0.15, { BackgroundTransparency = 1 })
-		U.iconColor(ic, T.Muted)
+		if not solid then U.tween(b, 0.15, { BackgroundTransparency = 1 }) end
+		U.iconColor(ic, idle)
 	end)
 	return b
 end
@@ -1069,7 +1074,7 @@ function Window:_BuildHeader()
 		self.LangLabel.Text = string.upper(Tr.Lang)
 	end)
 
-	self.GearBtn = self:_HeaderButton("Settings", "gear")
+	self.GearBtn = self:_HeaderButton("Settings", "gear", true)
 	self.GearBtn.Visible = false
 	U.onClick(self.GearBtn, function() self:_GlobalPopup() end)
 
