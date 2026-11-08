@@ -96,6 +96,7 @@ export type WindowOptions = {
 	Scale: number?,
 	CloseConfirm: boolean?,
 	HideNotice: boolean?,
+	BlackHole: boolean?,
 	HideUserInfo: boolean?,
 	HideProfile: boolean?,
 	FloatingButton: boolean?,
@@ -287,10 +288,10 @@ do
 		return U.new("TextButton", props)
 	end
 
-	function U.tween(o, t, props, style)
+	function U.tween(o, t, props, style, direction)
 		local tw = Svc.TweenService:Create(
 			o,
-			TweenInfo.new(t or 0.2, style or Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+			TweenInfo.new(t or 0.2, style or Enum.EasingStyle.Quart, direction or Enum.EasingDirection.Out),
 			props
 		)
 		tw:Play()
@@ -864,6 +865,7 @@ function Nebula:Window(o: WindowOptions?)
 	self._unload = {}
 	self._globals = {}
 	self.HideNotice = o.HideNotice ~= false
+	self.BlackHole = o.BlackHole -- false = plain fade/scale instead of the black hole animation
 
 	FS.mkdir(self.Folder .. "/configs")
 	self.Settings = FS.readJSON(self.Folder .. "/nebula.json") or {}
@@ -1384,6 +1386,7 @@ function Window:_Layout()
 end
 
 function Window:_Place()
+	if self._vortexing then return end
 	local scr = self.Gui.AbsoluteSize
 	local size = (self.Size or self.Desired) * self.UserScale
 	local mx = math.max(0, (scr.X - size.X) / 2)
@@ -1519,6 +1522,14 @@ function Window:SetVisible(v, instant)
 	if self.Visible == v and self.Holder.Visible == v then return end
 	self.Visible = v
 	self:_ClosePopup()
+	-- with the floating button on screen, the window is sucked into / spat out of the black hole
+	local hole = self.Float and self.Float.Visible and self.Float.Parent and self.BlackHole ~= false
+	if not instant and hole then
+		self._hideToken = (self._hideToken or 0) + 1
+		self:_Vortex(v)
+		if not v then self:_HideNotice() end
+		return
+	end
 	if v then
 		self._hideToken = (self._hideToken or 0) + 1
 		self.Holder.Visible = true
@@ -1546,13 +1557,108 @@ function Window:SetVisible(v, instant)
 				self._animating = false
 			end)
 		end
-		if not instant and self.HideNotice and not self._noticeShown then
-			self._noticeShown = true -- once per session, so it doesn't nag
-			local how = self.Float and "Tap the floating button" or "Press the toggle key"
-			local key = self.Keybind and (" or press " .. self.Keybind.Name) or ""
-			self:Notify({ Title = "Interface hidden", Content = how .. key .. " to open it again.", Icon = "eyeoff" })
-		end
+		if not instant then self:_HideNotice() end
 	end
+end
+
+function Window:_HideNotice()
+	if not self.HideNotice or self._noticeShown then return end
+	self._noticeShown = true -- once per session, so it doesn't nag
+	local how = self.Float and "Tap the black hole" or "Press the toggle key"
+	local key = self.Keybind and (" or press " .. self.Keybind.Name) or ""
+	self:Notify({ Title = "Interface hidden", Content = how .. key .. " to open it again.", Icon = "eyeoff" })
+end
+
+-- Black hole animation: the window spirals into the floating button while shrinking
+-- (closing), or spirals back out of it (opening). t = 0 → window at rest, t = 1 → inside the hole.
+function Window:_Vortex(opening)
+	local fb = self.Float
+	local gui = self.Gui
+	local us = self.UserScale
+	local center = gui.AbsoluteSize / 2
+	local hole = fb.AbsolutePosition - gui.AbsolutePosition + fb.AbsoluteSize / 2 - center
+	self._vortexId = (self._vortexId or 0) + 1
+	local id = self._vortexId
+	self._animating = true
+	self._vortexing = true
+
+	local home = self.Offset
+	local rel = home - hole
+	local function apply(t)
+		self._vortexT = t
+		local k = 1 - t
+		local ang = t * math.pi * 1.1 -- a bit over half a turn around the hole
+		local c, sn = math.cos(ang), math.sin(ang)
+		local x = hole.X + (rel.X * c - rel.Y * sn) * k
+		local y = hole.Y + (rel.X * sn + rel.Y * c) * k
+		self.Holder.Position = UDim2.new(0.5, x, 0.5, y)
+		self.Scale.Scale = math.max(0.02, us * k ^ 1.6)
+	end
+
+	-- start from wherever an interrupted animation left off
+	local from = self._vortexT
+	if from == nil or not self.Holder.Visible then from = opening and 1 or 0 end
+	self.Holder.Visible = true
+	apply(from)
+
+	local nv = Instance.new("NumberValue")
+	nv.Value = from
+	local conn = nv.Changed:Connect(function(t)
+		if self._vortexId == id then apply(t) end
+	end)
+	local dur = (opening and 0.45 or 0.55) * math.max(0.3, math.abs((opening and 0 or 1) - from))
+	local tw = Svc.TweenService:Create(nv, TweenInfo.new(dur, opening and Enum.EasingStyle.Quint or Enum.EasingStyle.Quad, opening and Enum.EasingDirection.Out or Enum.EasingDirection.In), { Value = opening and 0 or 1 })
+	tw.Completed:Connect(function()
+		conn:Disconnect()
+		nv:Destroy()
+		if self._vortexId ~= id then return end
+		self._animating = false
+		self._vortexing = false
+		self._vortexT = nil
+		if not opening then self.Holder.Visible = false end
+		self.Scale.Scale = us
+		self:_Place()
+		if opening then task.defer(function() self:_RelayoutAll() end) end
+	end)
+	tw:Play()
+	self:_HolePulse(opening)
+end
+
+-- the floating button reacts: swallows (closing) or bursts (opening), with a shockwave ring
+function Window:_HolePulse(opening)
+	local fb = self.Float
+	if not fb then return end
+	local sc = fb:FindFirstChild("Pulse") or U.new("UIScale", { Parent = fb, Name = "Pulse" })
+	local size = fb.AbsoluteSize.X
+	local ring = U.new("Frame", {
+		Parent = self.Gui,
+		BackgroundTransparency = 1,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromOffset(fb.AbsolutePosition.X - self.Gui.AbsolutePosition.X + size / 2, fb.AbsolutePosition.Y - self.Gui.AbsolutePosition.Y + size / 2),
+		ZIndex = 0,
+	})
+	U.round(ring)
+	local st = U.stroke(ring, T.Glow, 0.2, 2)
+	if opening then
+		-- burst outwards
+		ring.Size = UDim2.fromOffset(size, size)
+		U.tween(ring, 0.45, { Size = UDim2.fromOffset(size * 3.2, size * 3.2) }, Enum.EasingStyle.Quint)
+		U.tween(st, 0.45, { Transparency = 1, Thickness = 0.5 })
+		sc.Scale = 0.85
+		U.tween(sc, 0.4, { Scale = 1 }, Enum.EasingStyle.Back)
+	else
+		-- implode: ring collapses into the hole, the hole swells, then settles
+		ring.Size = UDim2.fromOffset(size * 3.2, size * 3.2)
+		st.Transparency = 0.8
+		U.tween(ring, 0.5, { Size = UDim2.fromOffset(size * 0.6, size * 0.6) }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+		U.tween(st, 0.5, { Transparency = 0.1, Thickness = 3 })
+		U.tween(sc, 0.45, { Scale = 1.18 }, Enum.EasingStyle.Quad)
+		task.delay(0.5, function()
+			if sc.Parent then U.tween(sc, 0.35, { Scale = 1 }, Enum.EasingStyle.Back) end
+			if st.Parent then U.tween(st, 0.15, { Transparency = 1 }) end
+		end)
+	end
+	task.delay(0.7, function() ring:Destroy() end)
 end
 
 -- MacLib-style alias: HideUI(true) hides, HideUI(false) shows

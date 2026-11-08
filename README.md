@@ -14,7 +14,7 @@ A full example that matches the design mockup is in [`example.lua`](example.lua)
 - **Aligned rows.** Slider names, bars and values line up in columns. A long name moves the control to its own line instead of squeezing it.
 - **Auto-translate.** Uses Google with 8 languages (EN, PT, ES, RU, TH, VI, ID, FI). The language is detected from the Roblox locale and can be changed from the globe button. Translations are cached in `NebulaGui/i18n/`.
 - **Search** in the top bar (Ctrl+F). Picking a result opens its tab, expands collapsed groups, scrolls to the element and highlights it.
-- **Floating button** you can drag, which opens and closes the window. Its position is remembered.
+- **Floating button** you can drag, which opens and closes the window. Its position is remembered. Closing sucks the window into it in a spiral, like a black hole, and opening spits it back out (`BlackHole = false` turns this off).
 - **Notifications, dialogs and configs** (save, load, delete, load on start).
 - **Executor-safe.** UI goes in `gethui()` or `CoreGui` (never `PlayerGui`), there are no global hooks, and the file compiles with `luau-compile -O0`. The avatar uses `rbxthumb://` and the ScreenGui uses safe-area insets.
 
@@ -37,6 +37,7 @@ local Window = Nebula:Window({
 	HideProfile = false,
 	StartHidden = false,
 	CloseConfirm = true,
+	BlackHole = true,                  -- spiral into / out of the floating button
 })
 ```
 
