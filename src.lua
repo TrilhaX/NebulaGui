@@ -1530,6 +1530,7 @@ function Window:SetVisible(v, instant)
 		if not v then self:_HideNotice() end
 		return
 	end
+	self:_VxCancel()
 	if v then
 		self._hideToken = (self._hideToken or 0) + 1
 		self.Holder.Visible = true
@@ -1569,66 +1570,401 @@ function Window:_HideNotice()
 	self:Notify({ Title = "Interface hidden", Content = how .. key .. " to open it again.", Icon = "eyeoff" })
 end
 
--- Black hole animation: the window spirals into the floating button while shrinking
--- (closing), or spirals back out of it (opening). t = 0 → window at rest, t = 1 → inside the hole.
-function Window:_Vortex(opening)
-	local fb = self.Float
-	local gui = self.Gui
-	local us = self.UserScale
-	local center = gui.AbsoluteSize / 2
-	local hole = fb.AbsolutePosition - gui.AbsolutePosition + fb.AbsoluteSize / 2 - center
-	self._vortexId = (self._vortexId or 0) + 1
-	local id = self._vortexId
-	self._animating = true
-	self._vortexing = true
+-- Black hole animation, built from clones of the window so the real UI is never touched.
+-- Closing: the hole tugs at the pieces closest to it first, then grabs more and more, faster
+-- and faster, until the empty window shell itself is swallowed.
+-- Opening (fast): everything is spat out of the hole in a mess, then snaps back into place.
+do
+	local MAX_PIECES = 70
+	local TUG = 0.14
 
-	local home = self.Offset
-	local rel = home - hole
-	local function apply(t)
-		self._vortexT = t
-		local k = 1 - t
-		local ang = t * math.pi * 1.1 -- a bit over half a turn around the hole
-		local c, sn = math.cos(ang), math.sin(ang)
-		local x = hole.X + (rel.X * c - rel.Y * sn) * k
-		local y = hole.Y + (rel.X * sn + rel.Y * c) * k
-		self.Holder.Position = UDim2.new(0.5, x, 0.5, y)
-		self.Scale.Scale = math.max(0.02, us * k ^ 1.6)
+	local function outQuint(u) return 1 - (1 - u) ^ 5 end
+	local function outBack(u)
+		local c1 = 1.5
+		local v = u - 1
+		return 1 + (c1 + 1) * v * v * v + c1 * v * v
+	end
+	local function rotate(v, a)
+		local c, s = math.cos(a), math.sin(a)
+		return Vector2.new(v.X * c - v.Y * s, v.X * s + v.Y * c)
+	end
+	local function rand(a, b) return a + math.random() * (b - a) end
+
+	-- does this object draw something by itself (ignoring its children)?
+	local function drawsBg(g)
+		if g.BackgroundTransparency < 1 then return true end
+		if (g:IsA("ImageLabel") or g:IsA("ImageButton")) and g.Image ~= "" and g.ImageTransparency < 1 then return true end
+		local st = g:FindFirstChildOfClass("UIStroke")
+		return st ~= nil and st.Enabled and st.Transparency < 1 and st.ApplyStrokeMode == Enum.ApplyStrokeMode.Border
 	end
 
-	-- start from wherever an interrupted animation left off
-	local from = self._vortexT
-	if from == nil or not self.Holder.Visible then from = opening and 1 or 0 end
-	self.Holder.Visible = true
-	apply(from)
+	local function drawsAnything(g)
+		if drawsBg(g) then return true end
+		if (g:IsA("TextLabel") or g:IsA("TextButton") or g:IsA("TextBox")) and g.Text ~= "" and g.TextTransparency < 1 then return true end
+		for _, c in ipairs(g:GetChildren()) do
+			if c:IsA("GuiObject") then return true end
+		end
+		return false
+	end
 
-	local nv = Instance.new("NumberValue")
-	nv.Value = from
-	local conn = nv.Changed:Connect(function(t)
-		if self._vortexId == id then apply(t) end
-	end)
-	local dur = (opening and 0.45 or 0.55) * math.max(0.3, math.abs((opening and 0 or 1) - from))
-	local tw = Svc.TweenService:Create(nv, TweenInfo.new(dur, opening and Enum.EasingStyle.Quint or Enum.EasingStyle.Quad, opening and Enum.EasingDirection.Out or Enum.EasingDirection.In), { Value = opening and 0 or 1 })
-	tw.Completed:Connect(function()
-		conn:Disconnect()
-		nv:Destroy()
-		if self._vortexId ~= id then return end
+	local function hasGuiKids(g)
+		for _, c in ipairs(g:GetChildren()) do
+			if c:IsA("GuiObject") and c.Visible then return true end
+		end
+		return false
+	end
+
+	-- copy of a container's own look (fill, image, corner, stroke, gradient) without its children
+	local function bgCopy(g)
+		local img = g:IsA("ImageLabel") or g:IsA("ImageButton")
+		local c = Instance.new(img and "ImageLabel" or "Frame")
+		c.BorderSizePixel = 0
+		c.BackgroundColor3 = g.BackgroundColor3
+		c.BackgroundTransparency = g.BackgroundTransparency
+		c.Rotation = g.Rotation
+		if img then
+			for _, p in ipairs({ "Image", "ImageColor3", "ImageTransparency", "ScaleType", "SliceCenter", "SliceScale", "TileSize", "ImageRectOffset", "ImageRectSize", "ResampleMode" }) do
+				pcall(function() c[p] = g[p] end)
+			end
+		end
+		for _, k in ipairs(g:GetChildren()) do
+			if k:IsA("UICorner") or k:IsA("UIGradient") or (k:IsA("UIStroke") and k.ApplyStrokeMode == Enum.ApplyStrokeMode.Border) then
+				k:Clone().Parent = c
+			end
+		end
+		return c
+	end
+
+	-- turns a clone into a free-floating piece centred on `center` (overlay pixels)
+	local function makePiece(st, g, center, absSize, kind)
+		local mult = 1
+		for _, k in ipairs(g:GetChildren()) do
+			if k:IsA("UIScale") then
+				mult *= k.Scale
+				k:Destroy()
+			elseif k:IsA("UISizeConstraint") or k:IsA("UIAspectRatioConstraint") then
+				k:Destroy()
+			end
+		end
+		local s = st.us * (mult > 0 and mult or 1)
+		pcall(function() g.AutomaticSize = Enum.AutomaticSize.None end)
+		if g:IsA("GuiButton") then g.Active = false end
+		g.AnchorPoint = Vector2.new(0.5, 0.5)
+		g.Size = UDim2.fromOffset(absSize.X / s, absSize.Y / s)
+		g.Position = UDim2.fromOffset(center.X, center.Y)
+		g.Visible = true
+		st.z += 1
+		g.ZIndex = st.z
+		local sc = Instance.new("UIScale")
+		sc.Scale = s
+		sc.Parent = g
+		g.Parent = st.overlay
+		local p = { g = g, sc = sc, s = s, p0 = center, r0 = g.Rotation, kind = kind }
+		table.insert(st.pieces, p)
+		return p
+	end
+
+	-- walk the visible UI and cut it into pieces: small chunks are cloned whole, big
+	-- containers are split into their own background + their children
+	local function collect(st, parent, x0, y0, x1, y1)
+		for _, c in ipairs(parent:GetChildren()) do
+			if #st.pieces >= MAX_PIECES then return end
+			if c:IsA("GuiObject") and c.Visible then
+				local p, s = c.AbsolutePosition, c.AbsoluteSize
+				local ix0, iy0 = math.max(p.X, x0), math.max(p.Y, y0)
+				local ix1, iy1 = math.min(p.X + s.X, x1), math.min(p.Y + s.Y, y1)
+				if s.X >= 1 and s.Y >= 1 and ix1 - ix0 >= 1 and iy1 - iy0 >= 1 then
+					local full = ix0 - p.X < 1 and iy0 - p.Y < 1 and p.X + s.X - ix1 < 1 and p.Y + s.Y - iy1 < 1
+					local kids = hasGuiKids(c)
+					if full and (not kids or s.X * s.Y <= st.maxArea) then
+						local cl = drawsAnything(c) and c:Clone()
+						if cl then makePiece(st, cl, p + s / 2 - st.origin, s, "leaf") end
+					elseif kids then
+						local bg
+						if drawsBg(c) then
+							local isz = Vector2.new(ix1 - ix0, iy1 - iy0)
+							bg = makePiece(st, bgCopy(c), Vector2.new(ix0, iy0) + isz / 2 - st.origin, isz, "bg")
+						end
+						local first = #st.pieces + 1
+						if c.ClipsDescendants or c:IsA("ScrollingFrame") then
+							collect(st, c, ix0, iy0, ix1, iy1)
+						else
+							collect(st, c, x0, y0, x1, y1)
+						end
+						if bg then bg.first, bg.last = first, #st.pieces end
+					end
+				end
+			end
+		end
+	end
+
+	function Window:_VxCapture()
+		local gui = self.Gui
+		local main = self.Main
+		local holder = self.Holder
+		local overlay = Instance.new("Frame")
+		overlay.Name = "Vortex"
+		overlay.BackgroundTransparency = 1
+		overlay.Size = UDim2.fromScale(1, 1)
+		overlay.ZIndex = 1
+		local fb = self.Float
+		if fb.ZIndex < 2 then fb.ZIndex = 2 end
+		local st = {
+			overlay = overlay,
+			pieces = {},
+			z = 2,
+			us = self.UserScale,
+			origin = gui.AbsolutePosition,
+			hole = fb.AbsolutePosition - gui.AbsolutePosition + fb.AbsoluteSize / 2,
+		}
+		local mp, ms = main.AbsolutePosition, main.AbsoluteSize
+		st.maxArea = ms.X * ms.Y * 0.06
+
+		-- the shell: glow + the window's own background, swallowed last / spat first
+		local hs = holder.AbsoluteSize
+		local shell = Instance.new("Frame")
+		shell.BackgroundTransparency = 1
+		shell.AnchorPoint = Vector2.new(0.5, 0.5)
+		shell.Size = UDim2.fromOffset(hs.X / st.us, hs.Y / st.us)
+		local glow = holder:FindFirstChild("Glow")
+		if glow then glow:Clone().Parent = shell end
+		local mbg = bgCopy(main)
+		mbg.Size = UDim2.fromScale(1, 1)
+		mbg.Parent = shell
+		shell.Parent = overlay
+		local sc = Instance.new("UIScale")
+		sc.Scale = st.us
+		sc.Parent = shell
+		shell.ZIndex = 1
+		local c0 = holder.AbsolutePosition + hs / 2 - st.origin
+		shell.Position = UDim2.fromOffset(c0.X, c0.Y)
+		st.shell = { g = shell, sc = sc, s = st.us, p0 = c0, r0 = 0, kind = "shell" }
+
+		collect(st, main, mp.X, mp.Y, mp.X + ms.X, mp.Y + ms.Y)
+		overlay.Parent = gui
+		return st
+	end
+
+	-- runs `step(t)` every frame until it returns true; false if the animation was cancelled
+	function Window:_VxRun(gen, step)
+		local t0 = os.clock()
+		local last = t0
+		while true do
+			Svc.RunService.RenderStepped:Wait()
+			if self._destroyed or self._vxGen ~= gen then return false end
+			local now = os.clock()
+			if step(now - t0, now - last) then return true end
+			last = now
+		end
+	end
+
+	local function place(p, pos, scale, rot)
+		p.g.Position = UDim2.fromOffset(pos.X, pos.Y)
+		p.sc.Scale = math.max(0, scale)
+		p.g.Rotation = rot
+	end
+
+	function Window:_VxClose(gen)
+		local st = self:_VxCapture()
+		self.Holder.Visible = false
+		local H = st.hole
+		local pieces = st.pieces
+
+		-- schedule: closest to the hole first, the gaps between grabs keep shrinking
+		local leaves = {}
+		for _, p in ipairs(pieces) do
+			if p.kind == "leaf" then
+				p.d = (p.p0 - H).Magnitude + rand(0, 60)
+				table.insert(leaves, p)
+			end
+		end
+		table.sort(leaves, function(a, b) return a.d < b.d end)
+		local n = math.max(1, #leaves)
+		for k, p in ipairs(leaves) do
+			local f = (k - 1) / n
+			p.L = TUG + 0.62 * f ^ 0.55
+			p.F = 0.44 - 0.16 * f
+		end
+		-- a container's background goes right after the last of its children
+		for i = #pieces, 1, -1 do
+			local p = pieces[i]
+			if p.kind == "bg" then
+				local m = 0
+				for j = p.first or i + 1, p.last or i do
+					if pieces[j].L then m = math.max(m, pieces[j].L) end
+				end
+				p.L = (m > 0 and m or 0.35) + 0.06
+				p.F = 0.32
+			end
+		end
+		local shell = st.shell
+		local lastL = 0
+		for _, p in ipairs(pieces) do lastL = math.max(lastL, p.L) end
+		shell.L = lastL + 0.1
+		shell.F = 0.38
+		table.insert(pieces, shell)
+		local total = 0
+		for _, p in ipairs(pieces) do
+			total = math.max(total, p.L + p.F)
+			p.spin = rand(0.85, 1.25)
+			local dir = H - p.p0
+			p.dir = dir.Magnitude > 1 and dir.Unit or Vector2.zero
+		end
+
+		local fb = self.Float
+		local pulse = fb:FindFirstChild("Pulse") or U.new("UIScale", { Parent = fb, Name = "Pulse" })
+		local gulp = 0
+		self:_HoleRing(false, math.min(0.9, total * 0.7))
+		task.delay(shell.L, function()
+			if self._vxGen == gen then self:_HoleRing(false, shell.F) end
+		end)
+
+		local ok = self:_VxRun(gen, function(t, dt)
+			for _, p in ipairs(pieces) do
+				if p.g.Visible then
+					local u = (t - p.L) / p.F
+					if u >= 1 then
+						p.g.Visible = false
+						gulp = math.min(0.22, gulp + (p.kind == "shell" and 0.2 or 0.05))
+					elseif u >= 0 then
+						-- swallowed: accelerating spiral, spinning and shrinking into the hole
+						local e = u * u
+						local k = 1 - e
+						local rel = p.p0 + p.dir * 6 - H
+						local pos = H + rotate(rel, e * math.pi * 1.3 * p.spin) * k
+						place(p, pos, p.s * k ^ 1.4, p.r0 + e * 320 * p.spin)
+					elseif p.kind == "shell" then
+						-- the empty window gets dragged and shaken more and more
+						local g = math.clamp(t / p.L, 0, 1) ^ 2
+						local shake = Vector2.new(math.sin(t * 47), math.cos(t * 39)) * 2.2 * g
+						place(p, p.p0 + (H - p.p0) * 0.05 * g + shake, p.s * (1 - 0.06 * g), p.r0 + math.sin(t * 31) * 1.4 * g)
+					else
+						-- tug: the piece trembles and leans towards the hole right before being taken
+						local a = math.clamp((t - (p.L - TUG)) / TUG, 0, 1)
+						if a > 0 then
+							local shake = Vector2.new(math.sin(t * 61 + p.d), math.cos(t * 53 + p.d)) * 1.6 * a
+							place(p, p.p0 + p.dir * 6 * a + shake, p.s * (1 - 0.04 * a), p.r0 + math.sin(t * 57 + p.d) * 3 * a)
+						end
+					end
+				end
+			end
+			gulp *= 0.9 ^ (dt * 60)
+			pulse.Scale = 1 + 0.12 * math.min(1, t / total) + gulp
+			return t >= total
+		end)
+		if ok and pulse.Parent then U.tween(pulse, 0.35, { Scale = 1 }, Enum.EasingStyle.Back) end
+		st.overlay:Destroy()
+		return ok
+	end
+
+	function Window:_VxOpen(gen)
+		-- lay the window out at home (still hidden) so every piece knows where it belongs
+		local holder = self.Holder
+		holder.Visible = false
+		self.Scale.Scale = self.UserScale
+		self._vortexing = false
+		self:_Place()
+		self._vortexing = true
+		Svc.RunService.RenderStepped:Wait()
+		if self._destroyed or self._vxGen ~= gen then return false end
+		local st = self:_VxCapture()
+		local H = st.hole
+		local pieces = st.pieces
+		table.insert(pieces, st.shell)
+
+		local total = 0
+		for _, p in ipairs(pieces) do
+			local shell = p.kind == "shell"
+			local mess = shell and 0.3 or (p.kind == "bg" and 0.55 or 1)
+			local out = p.p0 - H
+			out = out.Magnitude > 1 and out.Unit or Vector2.new(0, -1)
+			local jitter = rotate(Vector2.new(1, 0), rand(0, math.pi * 2)) * rand(8, 34)
+			p.E = shell and 0 or rand(0.015, 0.085)
+			p.P1 = shell and 0.13 or rand(0.13, 0.18)
+			p.H = shell and 0.02 or rand(0, 0.05)
+			p.P2 = shell and 0.2 or rand(0.2, 0.26)
+			p.M = p.p0 + (out * rand(18, 55) + jitter) * mess
+			p.rm = p.r0 + rand(-26, 26) * mess
+			p.sm = p.s * (1 + rand(-0.1, 0.1) * mess)
+			p.rs = p.r0 + rand(-240, 240)
+			total = math.max(total, p.E + p.P1 + p.H + p.P2)
+			place(p, H, 0, p.rs)
+		end
+
+		self:_HoleRing(true, 0.4)
+		local ok = self:_VxRun(gen, function(t)
+			for _, p in ipairs(pieces) do
+				local u1 = (t - p.E) / p.P1
+				local u2 = (t - p.E - p.P1 - p.H) / p.P2
+				if u2 >= 1 then
+					place(p, p.p0, p.s, p.r0)
+				elseif u2 >= 0 then
+					-- settles back into its slot
+					local e = outBack(u2)
+					place(p, p.M:Lerp(p.p0, e), p.sm + (p.s - p.sm) * e, p.rm + (p.r0 - p.rm) * e)
+				elseif u1 >= 0 then
+					-- spat out of the hole
+					local e = outQuint(math.min(1, u1))
+					place(p, H:Lerp(p.M, e), p.s * 0.15 + (p.sm - p.s * 0.15) * e, p.rs + (p.rm - p.rs) * e)
+				end
+			end
+			return t >= total
+		end)
+		if ok then holder.Visible = true end
+		st.overlay:Destroy()
+		return ok
+	end
+
+	function Window:_Vortex(opening)
+		-- one animation at a time; whatever the user asked for last plays right after
+		if self._vxBusy then return end
+		self._vxBusy = true
+		self._vxGen = (self._vxGen or 0) + 1
+		local gen = self._vxGen
+		self._animating = true
+		self._vortexing = true
+		task.spawn(function()
+			local ok, res = pcall(function()
+				if opening then return self:_VxOpen(gen) end
+				return self:_VxClose(gen)
+			end)
+			if not ok then warn("[NebulaGui] vortex: " .. tostring(res)) end
+			if self._vxGen ~= gen or self._destroyed then
+				self._vxBusy = false
+				return
+			end
+			self._vxBusy = false
+			self._animating = false
+			self._vortexing = false
+			self.Holder.Visible = self.Visible
+			self.Scale.Scale = self.UserScale
+			self:_Place()
+			if self.Visible ~= opening then
+				self:_Vortex(self.Visible)
+			elseif opening then
+				task.defer(function() self:_RelayoutAll() end)
+			end
+		end)
+	end
+
+	-- cancels a running black hole animation (instant show/hide)
+	function Window:_VxCancel()
+		if not self._vxBusy then return end
+		self._vxGen = (self._vxGen or 0) + 1
+		self._vxBusy = false
 		self._animating = false
 		self._vortexing = false
-		self._vortexT = nil
-		if not opening then self.Holder.Visible = false end
-		self.Scale.Scale = us
+		local ov = self.Gui:FindFirstChild("Vortex")
+		if ov then ov:Destroy() end
+		self.Scale.Scale = self.UserScale
 		self:_Place()
-		if opening then task.defer(function() self:_RelayoutAll() end) end
-	end)
-	tw:Play()
-	self:_HolePulse(opening)
+	end
 end
 
--- the floating button reacts: swallows (closing) or bursts (opening), with a shockwave ring
-function Window:_HolePulse(opening)
+-- shockwave ring around the floating button: bursts out (opening) or collapses in (closing)
+function Window:_HoleRing(opening, dur)
 	local fb = self.Float
 	if not fb then return end
-	local sc = fb:FindFirstChild("Pulse") or U.new("UIScale", { Parent = fb, Name = "Pulse" })
 	local size = fb.AbsoluteSize.X
 	local ring = U.new("Frame", {
 		Parent = self.Gui,
@@ -1640,25 +1976,22 @@ function Window:_HolePulse(opening)
 	U.round(ring)
 	local st = U.stroke(ring, T.Glow, 0.2, 2)
 	if opening then
-		-- burst outwards
 		ring.Size = UDim2.fromOffset(size, size)
-		U.tween(ring, 0.45, { Size = UDim2.fromOffset(size * 3.2, size * 3.2) }, Enum.EasingStyle.Quint)
-		U.tween(st, 0.45, { Transparency = 1, Thickness = 0.5 })
-		sc.Scale = 0.85
-		U.tween(sc, 0.4, { Scale = 1 }, Enum.EasingStyle.Back)
+		U.tween(ring, dur, { Size = UDim2.fromOffset(size * 3.4, size * 3.4) }, Enum.EasingStyle.Quint)
+		U.tween(st, dur, { Transparency = 1, Thickness = 0.5 })
+		local sc = fb:FindFirstChild("Pulse") or U.new("UIScale", { Parent = fb, Name = "Pulse" })
+		sc.Scale = 1.2
+		U.tween(sc, dur, { Scale = 1 }, Enum.EasingStyle.Back)
 	else
-		-- implode: ring collapses into the hole, the hole swells, then settles
 		ring.Size = UDim2.fromOffset(size * 3.2, size * 3.2)
 		st.Transparency = 0.8
-		U.tween(ring, 0.5, { Size = UDim2.fromOffset(size * 0.6, size * 0.6) }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-		U.tween(st, 0.5, { Transparency = 0.1, Thickness = 3 })
-		U.tween(sc, 0.45, { Scale = 1.18 }, Enum.EasingStyle.Quad)
-		task.delay(0.5, function()
-			if sc.Parent then U.tween(sc, 0.35, { Scale = 1 }, Enum.EasingStyle.Back) end
+		U.tween(ring, dur, { Size = UDim2.fromOffset(size * 0.6, size * 0.6) }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+		U.tween(st, dur, { Transparency = 0.1, Thickness = 3 })
+		task.delay(dur, function()
 			if st.Parent then U.tween(st, 0.15, { Transparency = 1 }) end
 		end)
 	end
-	task.delay(0.7, function() ring:Destroy() end)
+	task.delay(dur + 0.2, function() ring:Destroy() end)
 end
 
 -- MacLib-style alias: HideUI(true) hides, HideUI(false) shows
