@@ -54,6 +54,7 @@ local Window = Nebula:Window({
 | `Window:ConfigSection(tab)` | Ready-made configs UI |
 | `Window:LoadAutoConfig()` | Call at the end of your script |
 | `Window:Destroy()` | Removes everything and disconnects all signals |
+| `Window:CloseAnimated()` | Same as `Destroy()`, but first a black hole opens in the window, swallows it and the floating button, and collapses in a flash (used by the X button) |
 | `Window.Flags[flag]` | Access any flagged element |
 | `Window:HideUI(bool)` / `SetState` / `GetState` | MacLib-style show/hide |
 | `Window:SetScale(0.5–1.5)` / `GetScale()` | UI size (saved) |

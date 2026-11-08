@@ -1216,17 +1216,34 @@ end
 
 -- asks before destroying (CloseConfirm = false skips the dialog)
 function Window:Close()
-	if not self.CloseConfirm then return self:Destroy() end
+	if self._closing or self._destroyed then return end
+	if not self.CloseConfirm then return self:CloseAnimated() end
 	do
 		self:Dialog({
 			Title = "Close the interface?",
 			Content = "Everything will stop running. You'll need to execute the script again.",
 			Buttons = {
 				{ Name = "Cancel" },
-				{ Name = "Close", Primary = true, Callback = function() self:Destroy() end },
+				{ Name = "Close", Primary = true, Callback = function() self:CloseAnimated() end },
 			},
 		})
 	end
+end
+
+-- destroys the window with the collapse animation (Destroy() stays instant)
+function Window:CloseAnimated()
+	if self._closing or self._destroyed then return end
+	self._closing = true
+	task.spawn(function()
+		task.wait() -- let the dialog disappear first
+		local ok, err = pcall(function()
+			self:_Collapse(function() self:Destroy() end)
+		end)
+		if not ok then
+			warn("[NebulaGui] close: " .. tostring(err))
+			self:Destroy()
+		end
+	end)
 end
 
 function Window:_BuildSearch()
@@ -1519,6 +1536,7 @@ end
 -- Window: public API
 ---------------------------------------------------------------------------
 function Window:SetVisible(v, instant)
+	if self._closing then return end
 	if self.Visible == v and self.Holder.Visible == v then return end
 	self.Visible = v
 	self:_ClosePopup()
@@ -1708,14 +1726,14 @@ do
 		overlay.Size = UDim2.fromScale(1, 1)
 		overlay.ZIndex = 1
 		local fb = self.Float
-		if fb.ZIndex < 2 then fb.ZIndex = 2 end
+		if fb and fb.ZIndex < 2 then fb.ZIndex = 2 end
 		local st = {
 			overlay = overlay,
 			pieces = {},
 			z = 2,
 			us = self.UserScale,
 			origin = gui.AbsolutePosition,
-			hole = fb.AbsolutePosition - gui.AbsolutePosition + fb.AbsoluteSize / 2,
+			hole = fb and (fb.AbsolutePosition - gui.AbsolutePosition + fb.AbsoluteSize / 2) or (gui.AbsoluteSize / 2),
 		}
 		local mp, ms = main.AbsolutePosition, main.AbsoluteSize
 		st.maxArea = ms.X * ms.Y * 0.06
@@ -1963,6 +1981,154 @@ do
 		if ov then ov:Destroy() end
 		self.Scale.Scale = self.UserScale
 		self:_Place()
+	end
+
+	-- closing the hub for good (X): a new black hole opens in the middle of the window,
+	-- swallows every piece and the floating button, then collapses into a flash and is gone
+	function Window:_Collapse(done)
+		self:_VxCancel()
+		self._vxGen = (self._vxGen or 0) + 1
+		local gen = self._vxGen
+		self._vxBusy = true
+		self._animating = true
+		self._vortexing = true
+		local shown = self.Holder.Visible
+		local st = self:_VxCapture()
+		self.Holder.Visible = false
+		local pieces = st.pieces
+		local C = shown and st.shell.p0 or st.hole
+		if shown then table.insert(pieces, st.shell) else st.shell.g:Destroy() end
+		local fb = self.Float
+		if fb and fb.Visible then
+			local cl = fb:Clone()
+			if cl then
+				local fp = makePiece(st, cl, fb.AbsolutePosition + fb.AbsoluteSize / 2 - st.origin, fb.AbsoluteSize, "float")
+				fp.s = st.us
+				fp.sc.Scale = st.us
+			end
+			fb.Visible = false
+		end
+
+		-- schedule: nearest to the centre first, the window shell and the button last
+		local n = math.max(1, #pieces)
+		for _, p in ipairs(pieces) do
+			local v = C - p.p0
+			p.d = v.Magnitude + rand(0, 40)
+			p.dir = v.Magnitude > 1 and v.Unit or Vector2.zero
+		end
+		table.sort(pieces, function(a, b)
+			local ka = a.kind == "float" and 2 or (a.kind == "shell" and 1 or 0)
+			local kb = b.kind == "float" and 2 or (b.kind == "shell" and 1 or 0)
+			if ka ~= kb then return ka < kb end
+			return a.d < b.d
+		end)
+		local total = 0
+		for k, p in ipairs(pieces) do
+			local f = (k - 1) / n
+			p.L = 0.18 + 0.42 * f ^ 0.7
+			p.F = p.kind == "shell" and 0.36 or (p.kind == "float" and 0.4 or 0.34)
+			p.spin = rand(0.9, 1.3)
+			total = math.max(total, p.L + p.F)
+		end
+
+		-- the singularity
+		local core = U.new("Frame", {
+			Parent = st.overlay,
+			BackgroundColor3 = T.Background,
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromOffset(C.X, C.Y),
+			Size = UDim2.fromOffset(0, 0),
+			ZIndex = st.z + 5,
+		})
+		U.round(core)
+		local ring = U.stroke(core, T.Glow, 0, 3)
+		local grad = U.new("UIGradient", {
+			Parent = ring,
+			Color = ColorSequence.new(T.Accent, T.Glow),
+			Transparency = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 0),
+				NumberSequenceKeypoint.new(0.5, 0.15),
+				NumberSequenceKeypoint.new(1, 0.85),
+			}),
+		})
+		local halo = U.new("ImageLabel", {
+			Parent = st.overlay,
+			BackgroundTransparency = 1,
+			Image = "rbxassetid://6015897843",
+			ImageColor3 = T.Accent,
+			ImageTransparency = 0.35,
+			ScaleType = Enum.ScaleType.Slice,
+			SliceCenter = Rect.new(49, 49, 450, 450),
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromOffset(C.X, C.Y),
+			Size = UDim2.fromOffset(0, 0),
+			ZIndex = st.z + 4,
+		})
+		local coreSize = 0
+		local gulp = 0
+
+		local ok = self:_VxRun(gen, function(t, dt)
+			for _, p in ipairs(pieces) do
+				if p.g.Visible then
+					local u = (t - p.L) / p.F
+					if u >= 1 then
+						p.g.Visible = false
+						gulp = math.min(14, gulp + (p.kind == "leaf" and 3 or 9))
+					elseif u >= 0 then
+						local e = u * u
+						local k = 1 - e
+						local pos = C + rotate(p.p0 - C, e * math.pi * 1.4 * p.spin) * k
+						place(p, pos, p.s * k ^ 1.3, p.r0 + e * 360 * p.spin)
+					else
+						-- everything trembles while the hole forms
+						local a = math.clamp(t / p.L, 0, 1) ^ 2
+						local shake = Vector2.new(math.sin(t * 59 + p.d), math.cos(t * 47 + p.d)) * 1.8 * a
+						place(p, p.p0 + p.dir * 4 * a + shake, p.s * (1 - 0.03 * a), p.r0 + math.sin(t * 53 + p.d) * 2 * a)
+					end
+				end
+			end
+			gulp *= 0.88 ^ (dt * 60)
+			coreSize = 58 * outBack(math.min(1, t / 0.22)) + gulp
+			core.Size = UDim2.fromOffset(coreSize, coreSize)
+			halo.Size = UDim2.fromOffset(coreSize * 2.6, coreSize * 2.6)
+			grad.Rotation = (t * 540) % 360
+			return t >= total
+		end)
+		if not ok then
+			st.overlay:Destroy()
+			return done()
+		end
+
+		-- collapse to a point, then a lilac flash and a shockwave
+		U.tween(core, 0.16, { Size = UDim2.fromOffset(0, 0) }, Enum.EasingStyle.Back, Enum.EasingDirection.In)
+		U.tween(halo, 0.16, { Size = UDim2.fromOffset(0, 0), ImageTransparency = 0 }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+		task.wait(0.16)
+		if self._destroyed then return end
+		local flash = U.new("Frame", {
+			Parent = st.overlay,
+			BackgroundColor3 = T.Glow,
+			BackgroundTransparency = 0.1,
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromOffset(C.X, C.Y),
+			Size = UDim2.fromOffset(8, 8),
+			ZIndex = st.z + 6,
+		})
+		U.round(flash)
+		local wave = U.new("Frame", {
+			Parent = st.overlay,
+			BackgroundTransparency = 1,
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromOffset(C.X, C.Y),
+			Size = UDim2.fromOffset(10, 10),
+			ZIndex = st.z + 6,
+		})
+		U.round(wave)
+		local ws = U.stroke(wave, T.Glow, 0, 3)
+		U.tween(flash, 0.32, { Size = UDim2.fromOffset(90, 90), BackgroundTransparency = 1 }, Enum.EasingStyle.Quint)
+		U.tween(wave, 0.45, { Size = UDim2.fromOffset(420, 420) }, Enum.EasingStyle.Quint)
+		U.tween(ws, 0.45, { Transparency = 1, Thickness = 0.5 })
+		task.wait(0.45)
+		done()
 	end
 end
 
