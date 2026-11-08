@@ -1807,6 +1807,7 @@ do
 		for _, p in ipairs(pieces) do
 			total = math.max(total, p.L + p.F)
 			p.spin = rand(0.85, 1.25)
+			p.d = p.d or rand(0, 60)
 			local dir = H - p.p0
 			p.dir = dir.Magnitude > 1 and dir.Unit or Vector2.zero
 		end
@@ -1929,6 +1930,10 @@ do
 				return self:_VxClose(gen)
 			end)
 			if not ok then warn("[NebulaGui] vortex: " .. tostring(res)) end
+			-- never leave clones behind, even if the animation errored halfway
+			for _, ch in ipairs(self.Gui:GetChildren()) do
+				if ch.Name == "Vortex" then ch:Destroy() end
+			end
 			if self._vxGen ~= gen or self._destroyed then
 				self._vxBusy = false
 				return
