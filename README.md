@@ -87,7 +87,7 @@ Every element is available on a `Section` and on a `Collapsible`. Elements that 
 | `Toggle` | `Name, Description?, Default, Flag, Callback(bool)` | |
 | `Slider` | `Name, Min, Max, Step, Default, Suffix?, Flag, Callback(number)` | |
 | `Input` | `Name, Placeholder?, Default?, Numeric?, Live?, Width?, Flag, Callback(text)` | |
-| `Dropdown` | `Name, Options, Default?, Multi?, Placeholder?, Width?, Flag, Callback(value \| {values})` | `:Refresh(options, keepSelection?)` |
+| `Dropdown` | `Name, Options, Default?, Multi?, Placeholder?, Width?, Search?, Flag, Callback(value \| {values})` | `:Refresh(options, keepSelection?)` |
 | `Button` | `Name, Primary?, Callback()` | `:SetText(text)` |
 | `Stepper` | `Name, Min?, Max?, Step?, Default?, Flag, Callback(number)` | |
 | `Segmented` | `Name, Options, Default?, Width?, Flag, Callback(option)` | |
@@ -111,7 +111,7 @@ Any element with a name and a control (Toggle, Slider-free rows like Dropdown, I
 The whole UI hides while Roblox's own menu (Esc / Leave) is open, so it never covers it.
 
 `Input` also takes `AcceptedCharacters` (`"Numeric"`, `"Alphabetic"`, `"AlphaNumeric"`), `MaxLength` and `Changed(text)` for every keystroke.
-`Dropdown` also has `:AddOptions`, `:RemoveOptions`, `:ClearOptions`, `:GetOptions`, `:IsOption`.
+`Dropdown` also has `:AddOptions`, `:RemoveOptions`, `:ClearOptions`, `:GetOptions`, `:IsOption`. `Search = true` always shows a search box at the top of the list (Enter picks the first match), `Search = false` hides it; by default it appears when there are more than 6 options. `Searchable` works as an alias.
 Every element has `:SetName(text)`; MacLib names (`UpdateName`, `SetVisibility`, `UpdateSelection`, `InsertOptions`, `UpdateText`, `GetInput`) work as aliases.
 
 Option names in `Segmented` are shown translated, but callbacks always receive the original value. Dropdown options and list items are never translated.

@@ -38,7 +38,7 @@ main:Gear({ Name = "Webhook options", Description = "What gets sent to Discord",
 	panel:Toggle({ Name = "Send on loss", Flag = "WhLoss" })
 	panel:Dropdown({ Name = "Ping", Options = { "Nobody", "Me", "@everyone" }, Default = "Me", Flag = "WhPing" })
 end })
-main:Dropdown({ Name = "Map", Options = { "Planet Namak", "Shiganshina", "Snowy Town", "Hidden Sand Village" }, Default = "Planet Namak", Flag = "Map", Callback = print })
+main:Dropdown({ Name = "Map", Options = { "Planet Namak", "Shiganshina", "Snowy Town", "Hidden Sand Village" }, Default = "Planet Namak", Search = true, Flag = "Map", Callback = print })
 main:Button({ Name = "Join now", Primary = true, Callback = function()
 	Window:Notify({ Title = "Joining", Content = "Teleporting to the selected map." })
 end })

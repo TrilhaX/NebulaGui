@@ -125,7 +125,7 @@ export type InputOptions = RowOptions & {
 }
 export type DropdownOptions = RowOptions & {
 	Options: { any }?, Default: any, Multi: boolean?, Placeholder: string?, Width: number?,
-	Callback: Callback<any>,
+	Search: boolean?, Callback: Callback<any>,
 }
 export type ButtonOptions = { Name: string?, Primary: boolean?, Flag: string?, Callback: (() -> ())? }
 export type StepperOptions = RowOptions & { Min: number?, Max: number?, Step: number?, Default: number?, Callback: Callback<number> }
@@ -2960,6 +2960,25 @@ function Container:Slider(o: SliderOptions)
 			self.Tab.Page.ScrollingEnabled = true
 		end
 	end)
+	-- clicking the value clears it: the player just types the new number (the suffix stays)
+	local editing = false
+	box.PlaceholderColor3 = T.Faint
+	box.Focused:Connect(function()
+		editing = true
+		box.PlaceholderText = fmt(e.Value)
+		box.Text = suffix
+		box.CursorPosition = 1
+		editing = false
+	end)
+	box:GetPropertyChangedSignal("Text"):Connect(function()
+		if editing or not box:IsFocused() or suffix == "" then return end
+		local digits = box.Text:gsub("[^%d%.%-]", "")
+		if box.Text == digits .. suffix then return end
+		editing = true
+		box.Text = digits .. suffix
+		box.CursorPosition = #digits + 1
+		editing = false
+	end)
 	box.FocusLost:Connect(function()
 		e:Set(tonumber((box.Text:gsub("[^%d%.%-]", ""))))
 		render()
@@ -3090,6 +3109,8 @@ function Container:Dropdown(o: DropdownOptions)
 	local e = element(row, o)
 	e.Options = table.clone(o.Options or {})
 	e.Multi = o.Multi == true
+	e.Search = o.Search
+	if e.Search == nil then e.Search = o.Searchable end
 	e.Value = e.Multi and {} or nil
 	local placeholder = o.Placeholder or (e.Multi and "None" or "Select…")
 
@@ -3171,7 +3192,8 @@ end
 
 function Window:_DropdownPopup(e, anchor)
 	local opts = e.Options
-	local searchable = #opts > 6
+	-- Search = true always shows the search box, false never; by default only for long lists
+	local searchable = e.Search == true or (e.Search == nil and #opts > 6)
 	local top = searchable and 40 or 4
 	local h = top + math.max(1, math.min(#opts, 7)) * 32 + 6
 	local pop = self:_OpenPopup(anchor, math.max(anchor.AbsoluteSize.X, 170), h)
@@ -3192,9 +3214,22 @@ function Window:_DropdownPopup(e, anchor)
 			Text = "",
 		})
 		U.corner(search, 6)
-		U.stroke(search, T.Border)
-		U.pad(search, 0, 8, 0, 8)
+		local sst = U.stroke(search, T.Border)
+		U.pad(search, 0, 8, 0, 28)
+		U.icon("search", search, 12, T.Muted, { AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, -20, 0.5, 0) })
+		search.Focused:Connect(function() sst.Color = T.Accent end)
+		search.FocusLost:Connect(function() sst.Color = T.Border end)
 	end
+	local empty = U.text({
+		Parent = pop,
+		Text = Tr.Lookup("No results"),
+		TextSize = 12,
+		TextColor3 = T.Faint,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		Position = UDim2.fromOffset(0, top),
+		Size = UDim2.new(1, 0, 0, 32),
+		Visible = false,
+	})
 	local list = U.new("ScrollingFrame", {
 		Parent = pop,
 		BackgroundTransparency = 1,
@@ -3207,13 +3242,16 @@ function Window:_DropdownPopup(e, anchor)
 	})
 	U.pad(list, 2, 4, 4, 4)
 	U.list(list, 2)
+	local first
 	local function build(filter)
 		for _, c in ipairs(list:GetChildren()) do
 			if c:IsA("GuiButton") then c:Destroy() end
 		end
+		first = nil
 		for i, v in ipairs(opts) do
 			local s = tostring(v)
 			if not filter or s:lower():find(filter, 1, true) then
+				if first == nil then first = v end
 				local sel = (e.Multi and e.Value[v]) or (not e.Multi and e.Value == v)
 				local r = self:_PopupRow(list, s, sel, function()
 					if e.Multi then
@@ -3228,12 +3266,30 @@ function Window:_DropdownPopup(e, anchor)
 			end
 		end
 	end
-	build(nil)
+	local function refresh()
+		local q = search and search.Text:lower() or ""
+		build(q ~= "" and q or nil)
+		empty.Visible = first == nil
+		list.CanvasPosition = Vector2.zero
+	end
+	refresh()
 	if search then
-		search:GetPropertyChangedSignal("Text"):Connect(function()
-			local q = search.Text:lower()
-			build(q ~= "" and q or nil)
+		search:GetPropertyChangedSignal("Text"):Connect(refresh)
+		-- Enter picks the first match
+		search.FocusLost:Connect(function(enter)
+			if not enter or first == nil or not search.Parent then return end
+			if e.Multi then
+				e:Toggle(first)
+				refresh()
+			else
+				self:_ClosePopup()
+				e:Set(first)
+			end
 		end)
+		-- on PC the box is ready to type; on touch it waits for a tap (no surprise keyboard)
+		if not Svc.UserInputService.TouchEnabled then
+			task.defer(function() if search.Parent then search:CaptureFocus() end end)
+		end
 	end
 end
 
