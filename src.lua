@@ -1784,7 +1784,7 @@ function Window:_Search(q)
 	local s = self:_S()
 	local rel = (sf.AbsolutePosition - ov.AbsolutePosition) / s
 	local ssz = sf.AbsoluteSize / s
-	local w = math.max(ssz.X, 240)
+	local w = math.max(ssz.X, 300)
 	local h = math.max(1, #found) * 38 + 8
 	local pop = U.new("Frame", {
 		Parent = ov,
@@ -1806,8 +1806,11 @@ function Window:_Search(q)
 	for i, e in ipairs(found) do
 		local b = U.button({ Parent = pop, BackgroundColor3 = T.Accent, Size = UDim2.new(1, 0, 0, 36), LayoutOrder = i })
 		U.corner(b, 6)
-		U.text({ Parent = b, Text = e.label.Text, FontFace = F.SemiBold, TextSize = 12, Position = UDim2.fromOffset(10, 0), Size = UDim2.new(0.62, -10, 1, 0), TextTruncate = Enum.TextTruncate.AtEnd })
-		U.text({ Parent = b, Text = e.tab.Label.Text, TextSize = 11, TextColor3 = T.Muted, Position = UDim2.fromScale(0.62, 0), Size = UDim2.new(0.38, -10, 1, 0), TextXAlignment = Enum.TextXAlignment.Right, TextTruncate = Enum.TextTruncate.AtEnd })
+		U.text({ Parent = b, Text = e.label.Text, FontFace = F.SemiBold, TextSize = 12, Position = UDim2.fromOffset(10, 0), Size = UDim2.new(0.5, -10, 1, 0), TextTruncate = Enum.TextTruncate.AtEnd })
+		-- right side: what the element is (lilac) · which tab it's in
+		local kind = e.row:GetAttribute("NebulaKind")
+		local where = (kind and ('<font color="#' .. T.Glow:ToHex() .. '">' .. Tr.Get(kind) .. "</font>  ·  ") or "") .. e.tab.Label.Text
+		U.text({ Parent = b, Text = where, RichText = true, TextSize = 11, TextColor3 = T.Muted, Position = UDim2.fromScale(0.5, 0), Size = UDim2.new(0.5, -10, 1, 0), TextXAlignment = Enum.TextXAlignment.Right, TextTruncate = Enum.TextTruncate.AtEnd })
 		U.hover(b, function() b.BackgroundTransparency = 0.88 end, function() b.BackgroundTransparency = 1 end)
 		U.onClick(b, function()
 			self:_HideSearchResults()
@@ -3650,6 +3653,26 @@ function Container:ReorderList(o: ReorderListOptions)
 	e:Set(o.Items or {}, true)
 	w:_Flag(o.Flag, e)
 	return e
+end
+
+---------------------------------------------------------------------------
+-- Tag every element's row with its type, so search can say what each result is
+---------------------------------------------------------------------------
+do
+	local kinds = {
+		Toggle = "Toggle", Slider = "Slider", Input = "Input", Dropdown = "Dropdown", Button = "Button",
+		Stepper = "Stepper", Segmented = "Selector", Keybind = "Keybind", Colorpicker = "Color",
+		Paragraph = "Paragraph", Value = "Value", InfoBox = "Information", Collapsible = "Group",
+		Header = "Header", Gear = "Settings", ReorderList = "List", Label = "Label", Card = "Card",
+	}
+	for method, kind in pairs(kinds) do
+		local original = Container[method]
+		Container[method] = function(self, ...)
+			local e = original(self, ...)
+			if type(e) == "table" and typeof(e.Row) == "Instance" then e.Row:SetAttribute("NebulaKind", kind) end
+			return e
+		end
+	end
 end
 
 return Nebula
