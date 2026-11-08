@@ -2191,8 +2191,12 @@ function U.inlineRow(cont, o, ctrlW, ctrlH, stackable)
 	local run
 	name:GetPropertyChangedSignal("Text"):Connect(function() if run then run(true) end end)
 	run = w:_Watch(cont, row, function(W)
-		local avail = W - ctrlW - gw - 12
-		local stacked = stackable and (U.measure(name.Text, 13).X * 1.07 > avail)
+		-- controls that can stretch (dropdown, input, segmented) give up width on narrow rows;
+		-- long names wrap to two lines so every control in a section stays right-aligned.
+		-- only really narrow rows (phone portrait) move the control to its own line.
+		local cw = stackable and math.min(ctrlW, math.floor(W * 0.5)) or ctrlW
+		local avail = W - cw - gw - 12
+		local stacked = stackable and avail < 90
 		local tw = stacked and W or avail
 		local nh = U.measureH(name.Text, 13, tw)
 		local dh = desc and U.measureH(desc.Text, 11, tw) or 0
@@ -2207,9 +2211,9 @@ function U.inlineRow(cont, o, ctrlW, ctrlH, stackable)
 		else
 			h = math.max(th, ctrlH)
 			ty = math.floor((h - th) / 2)
-			ctrl.Position = UDim2.fromOffset(W - ctrlW, math.floor((h - ctrlH) / 2))
-			ctrl.Size = UDim2.fromOffset(ctrlW, ctrlH)
-			if gear then gear.Position = UDim2.fromOffset(W - ctrlW - gw, math.floor((h - 28) / 2)) end
+			ctrl.Position = UDim2.fromOffset(W - cw, math.floor((h - ctrlH) / 2))
+			ctrl.Size = UDim2.fromOffset(cw, ctrlH)
+			if gear then gear.Position = UDim2.fromOffset(W - cw - gw, math.floor((h - 28) / 2)) end
 		end
 		name.Position = UDim2.fromOffset(0, ty)
 		name.Size = UDim2.fromOffset(tw, nh)
@@ -2337,17 +2341,35 @@ function Container:Slider(o: SliderOptions)
 		render()
 	end)
 
+	self._sliderNames = self._sliderNames or {}
+	table.insert(self._sliderNames, name)
+	local cont = self
+	-- the column fits the longest slider name in this section (max 45% of the row);
+	-- names longer than that wrap inside the column instead of breaking the alignment
+	local function column(W)
+		local widest = 0
+		for _, n in ipairs(cont._sliderNames) do
+			if n.Parent then widest = math.max(widest, U.measure(n.Text, 13).X * 1.07) end
+		end
+		return math.clamp(math.ceil(widest) + 4, 70, math.floor(W * 0.45))
+	end
+	name:GetPropertyChangedSignal("Text"):Connect(function()
+		task.defer(function() cont.Tab:_Relayout() end)
+	end)
+
 	w:_Watch(self, row, function(W)
-		local L = math.clamp(math.floor(W * 0.36), 80, 150)
 		local valW = 48
-		if U.measure(name.Text, 13).X * 1.07 <= L then
-			name.Position = UDim2.new()
-			name.Size = UDim2.fromOffset(L, 22)
+		if W >= 220 then
+			local L = column(W)
+			local nh = math.max(16, U.measureH(name.Text, 13, L))
+			local h = math.max(22, nh)
 			name.TextYAlignment = Enum.TextYAlignment.Center
-			bar.Position = UDim2.fromOffset(L + 10, 0)
+			name.Position = UDim2.new()
+			name.Size = UDim2.fromOffset(L, h)
+			bar.Position = UDim2.fromOffset(L + 10, math.floor((h - 22) / 2))
 			bar.Size = UDim2.fromOffset(math.max(20, W - L - valW - 20), 22)
-			box.Position = UDim2.fromOffset(W - valW, 0)
-			row.Size = UDim2.new(1, 0, 0, 22)
+			box.Position = UDim2.fromOffset(W - valW, math.floor((h - 22) / 2))
+			row.Size = UDim2.new(1, 0, 0, h)
 		else
 			local nh = U.measureH(name.Text, 13, W)
 			name.TextYAlignment = Enum.TextYAlignment.Top
@@ -2359,6 +2381,8 @@ function Container:Slider(o: SliderOptions)
 			row.Size = UDim2.new(1, 0, 0, nh + 28)
 		end
 	end)
+	-- a new slider can widen the column: realign the ones already in this section
+	task.defer(function() cont.Tab:_Relayout() end)
 	w:_Index(self, o.Name, name, row)
 	e:Set(o.Default or min, true)
 	w:_Flag(o.Flag, e)
@@ -3124,8 +3148,12 @@ end
 ---------------------------------------------------------------------------
 function Container:Header(arg: string | HeaderOptions)
 	local o: HeaderOptions = if type(arg) == "string" then { Name = arg } else arg
-	local row = self:_NewRow(18)
-	local l = U.text({ Parent = row, Name = "Title", FontFace = F.Bold, TextSize = 13, Size = UDim2.fromScale(1, 1), TextTruncate = Enum.TextTruncate.AtEnd })
+	-- bigger, with breathing room above (except when it's the first thing in the section)
+	local first = self._n == 0
+	local row = self:_NewRow(first and 22 or 32)
+	local l = U.text({ Parent = row, Name = "Title", FontFace = F.Bold, TextSize = 16, TextColor3 = T.Text, TextYAlignment = Enum.TextYAlignment.Bottom, Size = UDim2.new(1, -14, 1, 0), Position = UDim2.fromOffset(14, 0), TextTruncate = Enum.TextTruncate.AtEnd })
+	local mark = U.new("Frame", { Parent = row, BackgroundColor3 = T.Accent, AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 0, 1, -3), Size = UDim2.fromOffset(4, 14) })
+	U.round(mark)
 	Tr.Register(l, o.Name or o.Text or "")
 	self.Window:_Index(self, o.Name or o.Text, l, row)
 	local e = element(row, o)
