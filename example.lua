@@ -66,9 +66,17 @@ steps:Stepper({ Name = "Wait for enemies in range", Min = 0, Max = 20, Default =
 steps:Segmented({ Name = "Conditions", Options = { "And", "Or" } })
 
 local list = ab:ReorderList({
-	Items = { "Carrot (Ultra)#1", "10s → Carrot (Ultra)#2", "15s → Carrot (Ultra)#3" },
+	Items = {
+		{ Text = "Carrot (Ultra)#1", Description = "Always casts first", Removable = false, Locked = true },
+		"10s → Carrot (Ultra)#2",
+		"15s → Carrot (Ultra)#3",
+	},
 	Flag = "AbilitySteps",
-	Callback = function(items) print("order:", table.concat(items, " | ")) end,
+	MaxItems = 10,
+	ConfirmRemove = true,
+	EmptyText = "No steps yet: every copy casts when ready",
+	OnMove = function(item, from, to) print("moved", from, "->", to) end,
+	Callback = function(items) print("steps:", #items) end,
 })
 steps:Button({ Name = "Add step", Primary = true, Callback = function()
 	local w = waitS:Get()

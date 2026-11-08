@@ -96,7 +96,7 @@ Every element is available on a `Section` and on a `Collapsible`. Elements that 
 | `Card` | `Title, Image?, ImageSize?` | `:Set(title?, image?)` |
 | `InfoBox` | `Title?, Text, Open?` | `:Set(text)` |
 | `Collapsible` | `Name, Open?` | returns a container that has every element above |
-| `ReorderList` | `Items, Flag, Callback(items), OnRemove(item, index)?` | `:Add(item)`, `:SetActive(index)` |
+| `ReorderList` | `Items, Flag, Callback(items)` + options below | `:Add(item, at?)`, `:Remove(i)`, `:Update(i, item)`, `:Move(from, to)`, `:Clear()`, `:Count()`, `:SetActive(i)` |
 | `Divider` | | |
 | `Header` | `Name` (or a string) | `:Set(text)` |
 | `SubLabel` | `Text` (or a string) | `:Set(text)` |
@@ -113,6 +113,38 @@ The whole UI hides while Roblox's own menu (Esc / Leave) is open, so it never co
 Every element has `:SetName(text)`; MacLib names (`UpdateName`, `SetVisibility`, `UpdateSelection`, `InsertOptions`, `UpdateText`, `GetInput`) work as aliases.
 
 Option names in `Segmented` are shown translated, but callbacks always receive the original value. Dropdown options and list items are never translated.
+
+### ReorderList options
+
+List-wide (all optional):
+
+| Option | Default | Effect |
+| --- | --- | --- |
+| `Removable` | `true` | Shows the Remove button on every row |
+| `Reorderable` | `true` | `false` turns off dragging and the arrows |
+| `Draggable` / `Arrows` | `true` | Turns off only the grip or only the ↑↓ |
+| `Numbered` | `true` | Number badge on the left |
+| `RemoveText` | `"Remove"` | Remove button text |
+| `ConfirmRemove` | `false` | Asks before removing |
+| `EmptyText` | `"Nothing here yet"` | Shown when empty (`false` hides it) |
+| `MaxItems` | none | `:Add` returns `false` when full |
+| `Format(item, index)` | | Custom row text |
+| `OnRemove(item, i)`, `OnMove(item, from, to)`, `OnClick(item, i)` | | Events |
+
+Per item, use a table instead of a plain value:
+
+```lua
+list:Add({ Text = "Carrot (Ultra)#1", Description = "Opens the match", Removable = false, Locked = true })
+```
+
+| Field | Effect |
+| --- | --- |
+| `Text` | Row text (`Value` also works) |
+| `Description` | Small second line |
+| `Removable` | Overrides the list's `Removable` for this row |
+| `Locked` | Pinned: can't be moved, and other rows can't jump over it |
+| `Badge` | Text in the badge instead of the number |
+| `Color` | Badge color (`Color3`) |
 
 ## Types
 

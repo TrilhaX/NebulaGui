@@ -139,7 +139,18 @@ export type InfoBoxOptions = { Title: string?, Text: string?, Content: string?, 
 export type CollapsibleOptions = { Name: string?, Open: boolean? }
 export type GearOptions = { Name: string?, Description: string?, Title: string?, Build: ((panel: any) -> ())?, Settings: ((panel: any) -> ())?, Flag: string? }
 export type HeaderOptions = { Name: string?, Text: string?, Flag: string? }
-export type ReorderListOptions = { Items: { any }?, Flag: string?, Callback: Callback<{ any }>, OnRemove: ((item: any, index: number) -> ())? }
+-- an item can be a plain value or { Text, Description?, Removable?, Locked?, Badge?, Color? }
+export type ReorderItem = any
+export type ReorderListOptions = {
+	Items: { ReorderItem }?, Flag: string?,
+	Removable: boolean?, Reorderable: boolean?, Draggable: boolean?, Arrows: boolean?, Numbered: boolean?,
+	RemoveText: string?, ConfirmRemove: boolean?, EmptyText: (string | boolean)?, MaxItems: number?,
+	Format: ((item: ReorderItem, index: number) -> string)?,
+	Callback: Callback<{ ReorderItem }>,
+	OnRemove: ((item: ReorderItem, index: number) -> ())?,
+	OnMove: ((item: ReorderItem, from: number, to: number) -> ())?,
+	OnClick: ((item: ReorderItem, index: number) -> ())?,
+}
 export type TabOptions = { Name: string?, Icon: string? }
 export type SectionOptions = { Name: string?, Description: string?, Side: ("Left" | "Right")? }
 export type NotifyOptions = { Title: string?, Content: string?, Duration: number?, Icon: string?, Translate: boolean?, Force: boolean? }
@@ -3452,15 +3463,51 @@ function Container:ReorderList(o: ReorderListOptions)
 	local w = self.Window
 	local ROW, GAP = TOUCH and 44 or 40, 6
 	local A = TOUCH and 28 or 22 -- arrow button size
-	local RM_X = -(6 + A * 2 + 8)
 	local STEP = ROW + GAP
+
+	-- list-wide options (each item can override Removable / Locked)
+	local removableDefault = o.Removable ~= false
+	local reorderable = o.Reorderable ~= false
+	local showGrip = reorderable and o.Draggable ~= false
+	local showArrows = reorderable and o.Arrows ~= false
+	local numbered = o.Numbered ~= false
+	local removeText = o.RemoveText or "Remove"
+
 	local row = self:_NewRow(0)
 	local list = U.new("Frame", { Parent = row, BackgroundTransparency = 1, Size = UDim2.fromScale(1, 0) })
+	local empty = U.text({ Parent = row, TextSize = 12, TextColor3 = T.Faint, Size = UDim2.new(1, 0, 0, 36), TextXAlignment = Enum.TextXAlignment.Center, Visible = false })
+	Tr.Register(empty, o.EmptyText or "Nothing here yet")
 	local e = element(row, o)
 	e.Items = {}
 	local rows = {}
 	local drag
 	local narrow = false
+
+	-- an item is either a plain value or a table { Text, Description?, Removable?, Locked?, Badge?, Color? }
+	local function isRich(v) return type(v) == "table" and (v.Text ~= nil or v.Value ~= nil) end
+	local function textOf(v, i)
+		if o.Format then
+			local ok, t = pcall(o.Format, v, i)
+			if ok and t ~= nil then return tostring(t) end
+		end
+		if isRich(v) then return tostring(v.Text or v.Value) end
+		return tostring(v)
+	end
+	local function removable(r)
+		if isRich(r.value) and r.value.Removable ~= nil then return r.value.Removable == true end
+		return removableDefault
+	end
+	-- locked = pinned: it can't move, and nothing can jump over it
+	local function locked(r)
+		return not reorderable or (isRich(r.value) and r.value.Locked == true)
+	end
+	local function pathFree(from, to)
+		local a, b = math.min(from, to), math.max(from, to)
+		for k = a, b do
+			if k ~= from and locked(rows[k]) then return false end
+		end
+		return true
+	end
 
 	local function totalH()
 		return #rows > 0 and (#rows * STEP - GAP) or 0
@@ -3468,9 +3515,13 @@ function Container:ReorderList(o: ReorderListOptions)
 
 	local function paint(r, i)
 		local lit = e.Active == i or (drag and drag.r == r)
-		r.num.Text = tostring(i)
-		U.tween(r.badge, 0.15, { BackgroundColor3 = lit and T.Accent or T.Elevated2 })
-		r.num.TextColor3 = lit and T.White or T.Glow
+		local custom = isRich(r.value) and r.value.Color
+		r.label.Text = textOf(r.value, i)
+		if r.num then
+			r.num.Text = (isRich(r.value) and r.value.Badge) and tostring(r.value.Badge) or tostring(i)
+			U.tween(r.badge, 0.15, { BackgroundColor3 = lit and T.Accent or (custom or T.Elevated2) })
+			r.num.TextColor3 = (lit or custom) and T.White or T.Glow
+		end
 		r.stroke.Color = lit and T.Accent or T.Border
 	end
 
@@ -3487,8 +3538,9 @@ function Container:ReorderList(o: ReorderListOptions)
 			end
 		end
 		local h = totalH()
+		empty.Visible = #rows == 0 and o.EmptyText ~= false
 		list.Size = UDim2.new(1, 0, 0, h)
-		row.Size = UDim2.new(1, 0, 0, h)
+		row.Size = UDim2.new(1, 0, 0, (#rows == 0 and empty.Visible) and 36 or h)
 	end
 
 	local function changed()
@@ -3498,20 +3550,42 @@ function Container:ReorderList(o: ReorderListOptions)
 		U.safe(o.Callback, table.clone(e.Items))
 	end
 
-	local function move(r, delta)
+	local function moveTo(r, j)
 		local i = table.find(rows, r)
-		local j = i and i + delta
-		if not j or j < 1 or j > #rows then return end
+		if not i or not j or j < 1 or j > #rows or i == j then return false end
+		if locked(r) or not pathFree(i, j) then return false end
 		table.remove(rows, i)
 		table.insert(rows, j, r)
+		U.safe(o.OnMove, r.value, i, j)
 		changed()
+		return true
 	end
 
-	local function applyWidth(r)
-		r.rm.Size = UDim2.fromOffset(narrow and A or 70, A)
-		r.rmText.Visible = not narrow
-		r.rmIcon.Visible = narrow
-		r.label.Size = UDim2.new(1, -58 + RM_X - (narrow and A or 70) - 6, 1, 0)
+	-- horizontal layout of one row depends on what it shows
+	local function arrange(r)
+		local left = 8
+		if r.grip then left = 28 end
+		if r.badge then
+			r.badge.Position = UDim2.new(0, left, 0.5, -11)
+			left += 30
+		end
+		local right = 6
+		if r.arrows then right += A * 2 + 8 end
+		if r.rm then
+			local rw = narrow and A or math.max(70, U.measure(r.rmText.Text, 11).X + 20)
+			r.rm.Size = UDim2.fromOffset(rw, A)
+			r.rm.Position = UDim2.new(1, -right, 0.5, 0)
+			r.rmText.Visible = not narrow
+			r.rmIcon.Visible = narrow
+			right += rw + 6
+		end
+		local hasDesc = r.desc ~= nil
+		r.label.Position = UDim2.fromOffset(left, hasDesc and 5 or 0)
+		r.label.Size = UDim2.new(1, -left - right, hasDesc and 0 or 1, hasDesc and 16 or 0)
+		if r.desc then
+			r.desc.Position = UDim2.fromOffset(left, 21)
+			r.desc.Size = UDim2.new(1, -left - right, 0, 14)
+		end
 	end
 
 	local function small(parent, kind, x)
@@ -3533,7 +3607,25 @@ function Container:ReorderList(o: ReorderListOptions)
 		U.tween(r.frame, 0.18, { BackgroundColor3 = on and T.Elevated2 or T.Surface })
 		U.tween(r.stroke, 0.18, { Thickness = on and 1.6 or 1 })
 		r.frame.ZIndex = on and 3 or 1
-		U.iconColor(r.gripIcon, on and T.Glow or T.Faint)
+		if r.gripIcon then U.iconColor(r.gripIcon, on and T.Glow or T.Faint) end
+	end
+
+	local function removeRow(r)
+		local i = table.find(rows, r)
+		if not i or r.removing then return end
+		r.removing = true
+		table.remove(rows, i)
+		if e.Active and e.Active > #rows then e.Active = nil end
+		local fr = r.frame
+		U.tween(r.scale, 0.18, { Scale = 0.85 })
+		U.tween(fr, 0.18, { BackgroundTransparency = 1 })
+		U.tween(r.stroke, 0.18, { Transparency = 1 })
+		for _, d in ipairs(fr:GetDescendants()) do
+			if d:IsA("GuiObject") then d.Visible = false end
+		end
+		task.delay(0.18, function() fr:Destroy() end)
+		U.safe(o.OnRemove, r.value, i)
+		changed()
 	end
 
 	local function makeRow(value, index)
@@ -3545,55 +3637,78 @@ function Container:ReorderList(o: ReorderListOptions)
 		})
 		U.corner(fr, 9)
 		local r = { frame = fr, value = value, stroke = U.stroke(fr, T.Border), scale = U.new("UIScale", { Parent = fr }) }
+		local pinned = locked(r)
 
-		local grip = U.button({ Parent = fr, Position = UDim2.fromOffset(2, 0), Size = UDim2.new(0, 24, 1, 0) })
-		r.gripIcon = U.icon("grip", grip, 12, T.Faint, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5) })
-		U.hover(grip, function()
-			if not drag then U.iconColor(r.gripIcon, T.Glow) end
-		end, function()
-			if not drag then U.iconColor(r.gripIcon, T.Faint) end
-		end)
+		if o.OnClick then
+			local hit = U.button({ Parent = fr, Size = UDim2.fromScale(1, 1), ZIndex = 0 })
+			U.onClick(hit, function()
+				local i = table.find(rows, r)
+				if i then U.safe(o.OnClick, r.value, i) end
+			end)
+		end
 
-		r.badge = U.new("Frame", { Parent = fr, BackgroundColor3 = T.Elevated2, Position = UDim2.new(0, 30, 0.5, -11), Size = UDim2.fromOffset(22, 22) })
-		U.corner(r.badge, 6)
-		r.num = U.text({ Parent = r.badge, FontFace = F.Bold, TextSize = 11, Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center })
-		r.label = U.text({ Parent = fr, Text = tostring(value), FontFace = F.SemiBold, TextSize = 12, Position = UDim2.fromOffset(60, 0), TextTruncate = Enum.TextTruncate.AtEnd })
+		if showGrip and not pinned then
+			r.grip = U.button({ Parent = fr, Position = UDim2.fromOffset(2, 0), Size = UDim2.new(0, 24, 1, 0) })
+			r.gripIcon = U.icon("grip", r.grip, 12, T.Faint, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5) })
+			U.hover(r.grip, function()
+				if not drag then U.iconColor(r.gripIcon, T.Glow) end
+			end, function()
+				if not drag then U.iconColor(r.gripIcon, T.Faint) end
+			end)
+			r.grip.InputBegan:Connect(function(i)
+				if not U.isPress(i) or drag then return end
+				local from = table.find(rows, r)
+				drag = { r = r, input = i, y = i.Position.Y, base = (from - 1) * STEP, from = from }
+				self.Tab.Page.ScrollingEnabled = false
+				lift(r, true)
+				layout(false)
+			end)
+		end
 
-		r.rm = U.button({ Parent = fr, BackgroundColor3 = T.Danger, BackgroundTransparency = 0.85, AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, RM_X, 0.5, 0) })
-		U.corner(r.rm, 6)
-		r.rmText = U.text({ Parent = r.rm, FontFace = F.Bold, TextSize = 11, TextColor3 = T.DangerText, Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center })
-		Tr.Register(r.rmText, "Remove")
-		r.rmIcon = U.icon("close", r.rm, 9, T.DangerText, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5) })
-		U.hover(r.rm, function() U.tween(r.rm, 0.12, { BackgroundTransparency = 0.7 }) end, function() U.tween(r.rm, 0.12, { BackgroundTransparency = 0.85 }) end)
-		applyWidth(r)
+		if numbered then
+			r.badge = U.new("Frame", { Parent = fr, BackgroundColor3 = T.Elevated2, Size = UDim2.fromOffset(22, 22) })
+			U.corner(r.badge, 6)
+			r.num = U.text({ Parent = r.badge, FontFace = F.Bold, TextSize = 11, Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center })
+		end
+		r.label = U.text({ Parent = fr, FontFace = F.SemiBold, TextSize = 12, TextTruncate = Enum.TextTruncate.AtEnd })
+		if isRich(value) and value.Description then
+			r.desc = U.text({ Parent = fr, Text = tostring(value.Description), TextSize = 10, TextColor3 = T.Muted, TextTruncate = Enum.TextTruncate.AtEnd })
+		end
 
-		U.onClick(small(fr, "up", -(6 + A + 4)), function() move(r, -1) end)
-		U.onClick(small(fr, "down", -6), function() move(r, 1) end)
-		U.onClick(r.rm, function()
-			local i = table.find(rows, r)
-			if not i or r.removing then return end
-			r.removing = true
-			table.remove(rows, i)
-			if e.Active and e.Active > #rows then e.Active = nil end
-			U.tween(r.scale, 0.18, { Scale = 0.85 })
-			U.tween(fr, 0.18, { BackgroundTransparency = 1 })
-			U.tween(r.stroke, 0.18, { Transparency = 1 })
-			for _, d in ipairs(fr:GetDescendants()) do
-				if d:IsA("GuiObject") then d.Visible = false end
-			end
-			task.delay(0.18, function() fr:Destroy() end)
-			U.safe(o.OnRemove, value, i)
-			changed()
-		end)
+		if showArrows and not pinned then
+			r.arrows = true
+			U.onClick(small(fr, "up", -(6 + A + 4)), function()
+				local i = table.find(rows, r)
+				if i then moveTo(r, i - 1) end
+			end)
+			U.onClick(small(fr, "down", -6), function()
+				local i = table.find(rows, r)
+				if i then moveTo(r, i + 1) end
+			end)
+		elseif showArrows then
+			r.arrows = true -- keep the same column width so pinned rows line up with the rest
+		end
 
-		grip.InputBegan:Connect(function(i)
-			if not U.isPress(i) or drag then return end
-			local from = table.find(rows, r)
-			drag = { r = r, input = i, y = i.Position.Y, base = (from - 1) * STEP }
-			self.Tab.Page.ScrollingEnabled = false
-			lift(r, true)
-			layout(false)
-		end)
+		if removable(r) then
+			r.rm = U.button({ Parent = fr, BackgroundColor3 = T.Danger, BackgroundTransparency = 0.85, AnchorPoint = Vector2.new(1, 0.5) })
+			U.corner(r.rm, 6)
+			r.rmText = U.text({ Parent = r.rm, FontFace = F.Bold, TextSize = 11, TextColor3 = T.DangerText, Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center })
+			Tr.Register(r.rmText, removeText)
+			r.rmIcon = U.icon("close", r.rm, 9, T.DangerText, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5) })
+			U.hover(r.rm, function() U.tween(r.rm, 0.12, { BackgroundTransparency = 0.7 }) end, function() U.tween(r.rm, 0.12, { BackgroundTransparency = 0.85 }) end)
+			U.onClick(r.rm, function()
+				if o.ConfirmRemove then
+					w:Dialog({
+						Title = "Remove this item?",
+						Content = textOf(r.value, table.find(rows, r) or 0),
+						Buttons = { { Name = "Cancel" }, { Name = removeText, Primary = true, Callback = function() removeRow(r) end } },
+					})
+				else
+					removeRow(r)
+				end
+			end)
+		end
+		arrange(r)
 		return r
 	end
 
@@ -3604,7 +3719,7 @@ function Container:ReorderList(o: ReorderListOptions)
 		drag.r.frame.Position = UDim2.fromOffset(0, y)
 		local target = math.clamp(math.floor(y / STEP + 0.5) + 1, 1, #rows)
 		local cur = table.find(rows, drag.r)
-		if cur and target ~= cur then
+		if cur and target ~= cur and pathFree(cur, target) then
 			table.remove(rows, cur)
 			table.insert(rows, target, drag.r)
 			layout(false)
@@ -3612,12 +3727,13 @@ function Container:ReorderList(o: ReorderListOptions)
 	end)
 	w:_ConnectFor(row, Svc.UserInputService.InputEnded, function(i)
 		if not drag or not (i == drag.input or i.UserInputType == Enum.UserInputType.MouseButton1) then return end
-		local r = drag.r
+		local r, from = drag.r, drag.from
 		drag = nil
 		self.Tab.Page.ScrollingEnabled = true
 		lift(r, false)
 		local idx = table.find(rows, r) or 1
 		U.tween(r.frame, 0.35, { Position = UDim2.fromOffset(0, (idx - 1) * STEP) }, Enum.EasingStyle.Back)
+		if idx ~= from then U.safe(o.OnMove, r.value, from, idx) end
 		changed()
 	end)
 
@@ -3625,7 +3741,7 @@ function Container:ReorderList(o: ReorderListOptions)
 		local n = W < 330
 		if n == narrow then return end
 		narrow = n
-		for _, r in ipairs(rows) do applyWidth(r) end
+		for _, r in ipairs(rows) do arrange(r) end
 	end)
 
 	function e:Set(items, silent)
@@ -3639,13 +3755,34 @@ function Container:ReorderList(o: ReorderListOptions)
 		if not silent then U.safe(o.Callback, table.clone(e.Items)) end
 	end
 	function e:Get() return table.clone(e.Items) end
-	function e:Add(v)
-		local r = makeRow(v, #rows + 1)
-		table.insert(rows, r)
+	function e:Count() return #rows end
+	function e:Add(v, at)
+		if o.MaxItems and #rows >= o.MaxItems then return false end
+		local pos = math.clamp(at or (#rows + 1), 1, #rows + 1)
+		local r = makeRow(v, pos)
+		table.insert(rows, pos, r)
 		r.scale.Scale = 0.9
 		U.tween(r.scale, 0.3, { Scale = 1 }, Enum.EasingStyle.Back)
 		changed()
+		return true
 	end
+	function e:Remove(index)
+		local r = rows[index]
+		if r then removeRow(r) end
+	end
+	function e:Update(index, v)
+		local r = rows[index]
+		if not r then return end
+		r.value = v
+		r.frame:Destroy()
+		rows[index] = makeRow(v, index)
+		changed()
+	end
+	function e:Move(from, to)
+		local r = rows[from]
+		return r ~= nil and moveTo(r, to)
+	end
+	function e:Clear() e:Set({}) end
 	function e:SetActive(i)
 		e.Active = i
 		layout(false)
