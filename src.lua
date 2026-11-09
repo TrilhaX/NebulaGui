@@ -1441,9 +1441,10 @@ function Window:_Drawer(open, instant)
 end
 
 function Window:_LayoutHeader()
-	local W = self.Header.AbsoluteSize.X
-	if W <= 0 then return end
+	-- design pixels (the holder's UIScale must not move the buttons)
 	local compact = self.Compact
+	local W = self.Size and (self.Size.X - (compact and 0 or SIDEBAR_W)) or self.Header.AbsoluteSize.X / self:_S()
+	if W <= 0 then return end
 	local x = 18
 	self.Burger.Visible = compact
 	if compact then
@@ -2525,7 +2526,7 @@ function Window:Dialog(o: DialogOptions?)
 		BackgroundColor3 = T.Surface,
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.fromScale(0.5, 0.5),
-		Size = UDim2.fromOffset(math.min(340, self.Main.AbsoluteSize.X - 32), 0),
+		Size = UDim2.fromOffset(math.min(340, self.Main.AbsoluteSize.X / self:_S() - 32), 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
 		ZIndex = 6,
 	})
