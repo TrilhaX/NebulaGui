@@ -1556,8 +1556,8 @@ function Window:SetVisible(v, instant)
 		if not instant then
 			self._animating = true
 			self.Scale.Scale = self.UserScale * 0.96
-			U.tween(self.Scale, 0.2, { Scale = self.UserScale })
-			task.delay(0.22, function()
+			U.tween(self.Scale, 0.35, { Scale = self.UserScale })
+			task.delay(0.37, function()
 				self._animating = false
 				self.Scale.Scale = self.UserScale
 			end)
@@ -1569,8 +1569,8 @@ function Window:SetVisible(v, instant)
 			self.Holder.Visible = false
 		else
 			self._animating = true
-			U.tween(self.Scale, 0.14, { Scale = self.UserScale * 0.96 }, Enum.EasingStyle.Quad)
-			task.delay(0.14, function()
+			U.tween(self.Scale, 0.08, { Scale = self.UserScale * 0.96 }, Enum.EasingStyle.Quad)
+			task.delay(0.08, function()
 				if self._hideToken ~= token or self.Visible then return end
 				self.Holder.Visible = false
 				self.Scale.Scale = self.UserScale
@@ -1596,6 +1596,8 @@ end
 do
 	local MAX_PIECES = 70
 	local TUG = 0.14
+	local CLOSE_SCALE = 0.5 -- minimizar: menor = mais rápido (0.5 = o dobro da velocidade)
+	local OPEN_SCALE = 1.8 -- abrir: maior = mais devagar (1.8 = quase o dobro do tempo)
 
 	local function outQuint(u) return 1 - (1 - u) ^ 5 end
 	local function outBack(u)
@@ -1824,6 +1826,8 @@ do
 		table.insert(pieces, shell)
 		local total = 0
 		for _, p in ipairs(pieces) do
+			p.L *= CLOSE_SCALE
+			p.F *= CLOSE_SCALE
 			total = math.max(total, p.L + p.F)
 			p.spin = rand(0.85, 1.25)
 			p.d = p.d or rand(0, 60)
@@ -1860,7 +1864,8 @@ do
 						place(p, p.p0 + (H - p.p0) * 0.05 * g + shake, p.s * (1 - 0.06 * g), p.r0 + math.sin(t * 31) * 1.4 * g)
 					else
 						-- tug: the piece trembles and leans towards the hole right before being taken
-						local a = math.clamp((t - (p.L - TUG)) / TUG, 0, 1)
+						local tug = TUG * CLOSE_SCALE
+						local a = math.clamp((t - (p.L - tug)) / tug, 0, 1)
 						if a > 0 then
 							local shake = Vector2.new(math.sin(t * 61 + p.d), math.cos(t * 53 + p.d)) * 1.6 * a
 							place(p, p.p0 + p.dir * 6 * a + shake, p.s * (1 - 0.04 * a), p.r0 + math.sin(t * 57 + p.d) * 3 * a)
@@ -1899,10 +1904,10 @@ do
 			local out = p.p0 - H
 			out = out.Magnitude > 1 and out.Unit or Vector2.new(0, -1)
 			local jitter = rotate(Vector2.new(1, 0), rand(0, math.pi * 2)) * rand(8, 34)
-			p.E = shell and 0 or rand(0.015, 0.085)
-			p.P1 = shell and 0.13 or rand(0.13, 0.18)
-			p.H = shell and 0.02 or rand(0, 0.05)
-			p.P2 = shell and 0.2 or rand(0.2, 0.26)
+			p.E = (shell and 0 or rand(0.015, 0.085)) * OPEN_SCALE
+			p.P1 = (shell and 0.13 or rand(0.13, 0.18)) * OPEN_SCALE
+			p.H = (shell and 0.02 or rand(0, 0.05)) * OPEN_SCALE
+			p.P2 = (shell and 0.2 or rand(0.2, 0.26)) * OPEN_SCALE
 			p.M = p.p0 + (out * rand(18, 55) + jitter) * mess
 			p.rm = p.r0 + rand(-26, 26) * mess
 			p.sm = p.s * (1 + rand(-0.1, 0.1) * mess)
@@ -1911,7 +1916,7 @@ do
 			place(p, H, 0, p.rs)
 		end
 
-		self:_HoleRing(true, 0.4)
+		self:_HoleRing(true, 0.4 * OPEN_SCALE)
 		local ok = self:_VxRun(gen, function(t)
 			for _, p in ipairs(pieces) do
 				local u1 = (t - p.E) / p.P1
