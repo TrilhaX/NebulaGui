@@ -115,7 +115,7 @@ type RowOptions = {
 
 export type ToggleOptions = RowOptions & { Default: boolean?, Callback: Callback<boolean> }
 export type SliderOptions = RowOptions & {
-	Min: number?, Max: number?, Step: number?, Increment: number?, Default: number?, Suffix: string?,
+	Min: number?, Max: number?, Step: number?, Increment: number?, Default: number?, Suffix: string?, ApplyOnRelease: boolean?,
 	Callback: Callback<number>,
 }
 export type InputOptions = RowOptions & {
@@ -203,17 +203,23 @@ do
 		return (ok and type(r) == "table") and r or {}
 	end
 
-	function FS.readJSON(p)
-		local s = FS.read(p)
+	local function decode(s)
 		if not s then return nil end
 		local ok, d = pcall(Svc.HttpService.JSONDecode, Svc.HttpService, s)
 		return (ok and type(d) == "table") and d or nil
 	end
 
+	-- a truncated write (game closed mid-save) falls back to the last good copy in .bak
+	function FS.readJSON(p)
+		return decode(FS.read(p)) or decode(FS.read(p .. ".bak"))
+	end
+
 	function FS.writeJSON(p, d)
 		local ok, s = pcall(Svc.HttpService.JSONEncode, Svc.HttpService, d)
-		if ok then return FS.write(p, s) end
-		return false
+		if not ok then return false end
+		local old = FS.read(p)
+		if old and old ~= s and decode(old) then FS.write(p .. ".bak", old) end
+		return FS.write(p, s)
 	end
 end
 
@@ -609,8 +615,14 @@ do
 		U.round(core)
 		if spin then
 			local info = TweenInfo.new(6, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut, -1)
-			Svc.TweenService:Create(gradients[1], info, { Rotation = 360 }):Play()
-			Svc.TweenService:Create(gradients[2], info, { Rotation = -180 }):Play()
+			local t1 = Svc.TweenService:Create(gradients[1], info, { Rotation = 360 })
+			local t2 = Svc.TweenService:Create(gradients[2], info, { Rotation = -180 })
+			t1:Play()
+			t2:Play()
+			f.Destroying:Connect(function()
+				t1:Cancel()
+				t2:Cancel()
+			end)
 		end
 		return f
 	end
@@ -646,19 +658,48 @@ do
 		return Tr.Names[code] and code or "en"
 	end
 
+	Tr.MaxEntries = 4000 -- per language; past this new texts stay in English instead of growing the file forever
+	Tr.Count = {}
+	Tr._saveAt = {}
+
 	function Tr.Load(lang)
 		if Tr.Loaded[lang] then return end
 		Tr.Loaded[lang] = true
 		local d = FS.readJSON(Tr.Folder .. "/" .. lang .. ".json")
 		Tr.Cache[lang] = Tr.Cache[lang] or {}
+		local n = 0
 		if d then
 			for k, v in pairs(d) do Tr.Cache[lang][k] = v end
 		end
+		for _ in pairs(Tr.Cache[lang]) do n += 1 end
+		Tr.Count[lang] = n
 	end
 
 	function Tr.Save(lang)
 		FS.mkdir(Tr.Folder)
-		FS.writeJSON(Tr.Folder .. "/" .. lang .. ".json", Tr.Cache[lang] or {})
+		local path = Tr.Folder .. "/" .. lang .. ".json"
+		local mem = Tr.Cache[lang] or {}
+		-- the folder is shared by every script using the library: merge what others saved instead of overwriting it
+		local disk = FS.readJSON(path)
+		if disk then
+			for k, v in pairs(disk) do
+				if mem[k] == nil then
+					mem[k] = v
+					Tr.Count[lang] = (Tr.Count[lang] or 0) + 1
+				end
+			end
+		end
+		FS.writeJSON(path, mem)
+	end
+
+	-- at most one write per language every 10 s
+	function Tr.SaveSoon(lang)
+		if Tr._saveAt[lang] then return end
+		Tr._saveAt[lang] = true
+		task.delay(10, function()
+			Tr._saveAt[lang] = nil
+			Tr.Save(lang)
+		end)
 	end
 
 	local function skip(s)
@@ -691,8 +732,19 @@ do
 				if not o.Parent then Tr.Items[o] = nil end
 			end
 		end
-		Tr.Items[obj] = { s, prop or "Text" }
-		obj[prop or "Text"] = Tr.Get(s)
+		local old = Tr.Items[obj]
+		local changes = 0
+		if old and old[2] == (prop or "Text") then
+			changes = (old[1] ~= s) and (old[3] or 0) + 1 or (old[3] or 0)
+		end
+		Tr.Items[obj] = { s, prop or "Text", changes }
+		-- a label rewritten again and again (counters, timers, "Wave: 12") is live text:
+		-- use what is cached but never send it to Google
+		if changes >= 3 then
+			obj[prop or "Text"] = Tr.Lookup(s)
+		else
+			obj[prop or "Text"] = Tr.Get(s)
+		end
 	end
 
 	function Tr.Unregister(obj)
@@ -702,6 +754,7 @@ do
 	function Tr.Queue(s)
 		local failed = Tr.Failed[Tr.Lang]
 		if skip(s) or (failed and failed[s]) then return end
+		if (Tr.Count[Tr.Lang] or 0) >= Tr.MaxEntries then return end
 		Tr.Pending[s] = true
 		if not Tr._scheduled then
 			Tr._scheduled = true
@@ -725,7 +778,7 @@ do
 					Tr.Apply()
 				end
 			end)
-			Tr.Save(lang)
+			Tr.SaveSoon(lang)
 			if Tr.Lang == lang then Tr.Apply() end
 		end)
 	end
@@ -756,9 +809,14 @@ do
 		local failed = Tr.Failed[lang]
 		local chunk, size = {}, 0
 
+		local function put(s, v)
+			if cache[s] == nil then Tr.Count[lang] = (Tr.Count[lang] or 0) + 1 end
+			cache[s] = v
+		end
+
 		local function single(s)
 			local r = googleRequest(lang, s)
-			if r and r ~= "" then cache[s] = trim(r) else failed[s] = true end
+			if r and r ~= "" then put(s, trim(r)) else failed[s] = true end
 		end
 
 		local function flush()
@@ -766,7 +824,7 @@ do
 			local r = googleRequest(lang, table.concat(chunk, "\n"))
 			local lines = if r then string.split(r, "\n") else {}
 			if #lines == #chunk then
-				for i, s in ipairs(chunk) do cache[s] = trim(lines[i]) end
+				for i, s in ipairs(chunk) do put(s, trim(lines[i])) end
 			else
 				for _, s in ipairs(chunk) do single(s) end
 			end
@@ -809,9 +867,10 @@ do
 		Tr.Lang = lang
 		if lang ~= "en" then
 			Tr.Load(lang)
+			Tr.Failed[lang] = nil -- picking the language again retries texts Google refused earlier
 			local c = Tr.Cache[lang]
 			for _, info in pairs(Tr.Items) do
-				if not c[info[1]] then Tr.Queue(info[1]) end
+				if not c[info[1]] and (info[3] or 0) < 3 then Tr.Queue(info[1]) end
 			end
 		end
 		Tr.Apply()
@@ -902,7 +961,8 @@ function Nebula:Window(o: WindowOptions?)
 	end)
 	table.insert(Tr.Listeners, function()
 		if not self.Gui.Parent then return "remove" end
-		self:_RelayoutAll()
+		for _, tab in ipairs(self.Tabs) do tab:_RelayoutSoon() end
+		self:_LayoutHeader()
 	end)
 
 	Tr.SetLang(self.Settings.Language or o.Language or Tr.Detect())
@@ -930,8 +990,18 @@ function Window:_ConnectFor(owner, signal, fn)
 	return c
 end
 
-function Window:_SaveSettings()
+function Window:_SaveSettingsNow()
+	self._settingsDirty = false
 	FS.writeJSON(self.Folder .. "/nebula.json", self.Settings)
+end
+
+-- coalesced: a burst of changes (dragging the UI size slider) is one write
+function Window:_SaveSettings()
+	if self._settingsDirty then return end
+	self._settingsDirty = true
+	task.delay(0.5, function()
+		if self._settingsDirty then self:_SaveSettingsNow() end
+	end)
 end
 
 function Window:_BuildShell()
@@ -1301,7 +1371,18 @@ function Window:_BuildSearch()
 	box.FocusLost:Connect(function()
 		st.Color = T.Border
 		task.delay(0.2, function()
-			self:_HideSearchResults()
+			-- a result still held down hides the list itself when the click lands
+			if not self._searchPress then
+				self:_HideSearchResults()
+			else
+				-- released outside the result: nothing else will close it
+				task.delay(2, function()
+					if not box:IsFocused() then
+						self._searchPress = false
+						self:_HideSearchResults()
+					end
+				end)
+			end
 			if self.Compact and box.Text == "" then
 				self.SearchOpen = false
 				self:_LayoutHeader()
@@ -1517,7 +1598,7 @@ function Window:_Watch(cont, row, fn)
 		local x = row.AbsoluteSize.X
 		if x > 0 and (force or x ~= last) then
 			last = x
-			fn(math.floor(x / self.UserScale + 0.5))
+			fn(math.floor(x / self:_S() + 0.5))
 		end
 	end
 	row:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
@@ -1568,14 +1649,18 @@ function Window:SetVisible(v, instant)
 	self:_VxCancel()
 	if v then
 		self._hideToken = (self._hideToken or 0) + 1
+		local token = self._hideToken
 		self.Holder.Visible = true
 		if not instant then
 			self._animating = true
 			self.Scale.Scale = self.UserScale * 0.96
 			U.tween(self.Scale, 0.35, { Scale = self.UserScale })
 			task.delay(0.37, function()
+				if self._hideToken ~= token or self._destroyed then return end
 				self._animating = false
 				self.Scale.Scale = self.UserScale
+				-- rows measured mid-animation were laid out at ~96% width
+				self:_RelayoutAll()
 			end)
 		end
 	else
@@ -2218,9 +2303,23 @@ function Window:Destroy()
 	pcall(function() self:SetLowCpu(false) end)
 	pcall(function() self:SetFPSBoost(false) end)
 	pcall(function() self:SetHidePlayer(false) end)
+	if self._settingsDirty then pcall(function() self:_SaveSettingsNow() end) end
 	for _, c in ipairs(self._conns) do pcall(function() c:Disconnect() end) end
 	self._conns = {}
+	-- drop this window's translated labels now instead of waiting for the next language change
+	for obj in pairs(Tr.Items) do
+		local ok, mine = pcall(function() return obj:IsDescendantOf(self.Gui) end)
+		if not ok or mine then Tr.Items[obj] = nil end
+	end
+	for name, p in pairs(self._panels or {}) do
+		pcall(function() p.Frame:Destroy() end)
+		self._panels[name] = nil
+	end
 	pcall(function() self.Gui:Destroy() end)
+	for i = #Tr.Listeners, 1, -1 do
+		local ok, r = pcall(Tr.Listeners[i])
+		if ok and r == "remove" then table.remove(Tr.Listeners, i) end
+	end
 	local i = table.find(Nebula.Windows, self)
 	if i then table.remove(Nebula.Windows, i) end
 end
@@ -2259,7 +2358,7 @@ function Window:SelectTab(tab)
 	self.Current = tab
 	Tr.Register(self.TabTitle, tab.Name)
 	self:_Drawer(false)
-	task.defer(function() tab:_Relayout() end)
+	tab:_RelayoutSoon()
 end
 
 function Window:Tab(arg: string | TabOptions)
@@ -2397,7 +2496,9 @@ end
 -- Search
 ---------------------------------------------------------------------------
 function Window:_Index(cont, name, label, row)
-	if not name or name == "" or cont.Tab.NoIndex then return end
+	if name == nil or cont.Tab.NoIndex then return end
+	name = tostring(name)
+	if name == "" then return end
 	table.insert(self._index, { name = name, label = label, row = row, cont = cont, tab = cont.Tab })
 end
 
@@ -2427,7 +2528,8 @@ function Window:_Search(q)
 	local s = self:_S()
 	local rel = (sf.AbsolutePosition - ov.AbsolutePosition) / s
 	local ssz = sf.AbsoluteSize / s
-	local w = math.max(ssz.X, 300)
+	-- never wider than the window (compact mode is 260 wide)
+	local w = math.min(math.max(ssz.X, 300), ov.AbsoluteSize.X / s - 16)
 	local h = math.max(1, #found) * 38 + 8
 	local pop = U.new("Frame", {
 		Parent = ov,
@@ -2455,7 +2557,21 @@ function Window:_Search(q)
 		local where = (kind and ('<font color="#' .. T.Glow:ToHex() .. '">' .. Tr.Get(kind) .. "</font>  ·  ") or "") .. e.tab.Label.Text
 		U.text({ Parent = b, Text = where, RichText = true, TextSize = 11, TextColor3 = T.Muted, Position = UDim2.fromScale(0.5, 0), Size = UDim2.new(0.5, -10, 1, 0), TextXAlignment = Enum.TextXAlignment.Right, TextTruncate = Enum.TextTruncate.AtEnd })
 		U.hover(b, function() b.BackgroundTransparency = 0.88 end, function() b.BackgroundTransparency = 1 end)
+		local function press(i)
+			return i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch
+		end
+		b.InputBegan:Connect(function(i)
+			if press(i) then self._searchPress = true end
+		end)
+		b.InputEnded:Connect(function(i)
+			if not press(i) then return end
+			task.delay(0.05, function()
+				self._searchPress = false
+				if not self.SearchBox:IsFocused() then self:_HideSearchResults() end
+			end)
+		end)
 		U.onClick(b, function()
+			self._searchPress = false
 			self:_HideSearchResults()
 			self.SearchBox.Text = ""
 			self.SearchBox:ReleaseFocus()
@@ -2487,7 +2603,7 @@ end
 ---------------------------------------------------------------------------
 function Window:Notify(arg: string | NotifyOptions)
 	local o: NotifyOptions = if type(arg) == "string" then { Title = arg } else arg
-	if not self.NotificationsEnabled and not o.Force then
+	if self._destroyed or (not self.NotificationsEnabled and not o.Force) then
 		return { Close = function() end }
 	end
 	local translate = o.Translate ~= false
@@ -2538,6 +2654,7 @@ end
 
 function Window:Dialog(o: DialogOptions?)
 	o = o or {}
+	if self._destroyed then return { Close = function() end } end
 	self:_ClosePopup()
 	if not self.Visible then self:SetVisible(true) end
 	local scrim = U.button({ Parent = self.Overlay, BackgroundColor3 = T.Background, BackgroundTransparency = 0.3, Size = UDim2.fromScale(1, 1), ZIndex = 5 })
@@ -2595,18 +2712,45 @@ end
 -- Configs
 ---------------------------------------------------------------------------
 function Window:_Flag(flag, e)
-	if flag then self.Flags[flag] = e end
+	if not flag then return end
+	self.Flags[flag] = e
+	-- a destroyed element must not be saved/loaded by configs anymore
+	local row = type(e) == "table" and e.Row
+	if typeof(row) == "Instance" then
+		row.Destroying:Connect(function()
+			if self.Flags[flag] == e then self.Flags[flag] = nil end
+		end)
+	end
 end
 
 function Window:SaveConfig(name)
 	name = U.cleanName(name)
 	if name == "" then return false end
+	-- Roblox types can't go through JSONEncode: turn them into plain values (deep), drop the rest
+	local function plain(v, depth)
+		local t = typeof(v)
+		if t == "string" or t == "number" or t == "boolean" then return v end
+		if t == "EnumItem" then return v.Name end
+		if t == "Color3" then return "#" .. v:ToHex() end
+		if t == "table" and depth < 8 then
+			local out = {}
+			for k, x in pairs(v) do
+				if type(k) == "string" or type(k) == "number" then out[k] = plain(x, depth + 1) end
+			end
+			return out
+		end
+		return nil
+	end
 	local data = {}
 	for flag, e in pairs(self.Flags) do
 		local ok, v = pcall(e.Get, e)
 		if ok then
-			if typeof(v) == "EnumItem" then v = v.Name end
-			data[flag] = v
+			v = plain(v, 0)
+			if pcall(Svc.HttpService.JSONEncode, Svc.HttpService, { v }) then
+				data[flag] = v
+			else
+				warn("[NebulaGui] flag not saved (not JSON-safe): " .. tostring(flag))
+			end
 		end
 	end
 	FS.mkdir(self.Folder .. "/configs")
@@ -2727,7 +2871,17 @@ function Tab:_SetCols(n)
 	for _, s in ipairs(self.Sections) do
 		s.Frame.Parent = (n == 2 and s.Side == "Right") and self.Right or self.Left
 	end
-	task.defer(function() self:_Relayout() end)
+	self:_RelayoutSoon()
+end
+
+-- coalesced: any number of requests in the same frame = one relayout of the tab
+function Tab:_RelayoutSoon()
+	if self._relayoutQueued then return end
+	self._relayoutQueued = true
+	task.defer(function()
+		self._relayoutQueued = false
+		self:_Relayout()
+	end)
 end
 
 function Tab:_Relayout()
@@ -2960,16 +3114,22 @@ function Container:Slider(o: SliderOptions)
 	function e:Get() return e.Value end
 
 	local dragging = false
+	local dragStart
+	-- ApplyOnRelease: while dragging only the number moves; the callback runs once when the finger/mouse lets go
 	local function update(x)
 		local a = math.clamp((x - track.AbsolutePosition.X) / math.max(track.AbsoluteSize.X, 1), 0, 1)
-		e:Set(min + a * (max - min))
+		e:Set(min + a * (max - min), o.ApplyOnRelease == true)
 	end
 	bar.InputBegan:Connect(function(i)
 		if U.isPress(i) then
 			dragging = true
+			dragStart = e.Value
 			self.Tab.Page.ScrollingEnabled = false
 			update(i.Position.X)
 		end
+	end)
+	row.Destroying:Connect(function()
+		if dragging then self.Tab.Page.ScrollingEnabled = true end
 	end)
 	w:_ConnectFor(row, Svc.UserInputService.InputChanged, function(i)
 		if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
@@ -2980,6 +3140,7 @@ function Container:Slider(o: SliderOptions)
 		if dragging and U.isPress(i) then
 			dragging = false
 			self.Tab.Page.ScrollingEnabled = true
+			if o.ApplyOnRelease and e.Value ~= dragStart then U.safe(o.Callback, e.Value) end
 		end
 	end)
 	-- clicking the value clears it: the player just types the new number (the suffix stays)
@@ -3011,16 +3172,24 @@ function Container:Slider(o: SliderOptions)
 	local cont = self
 	-- the column fits the longest slider name in this section (max 45% of the row);
 	-- names longer than that wrap inside the column instead of breaking the alignment
+	-- measured once per change of any slider name in the section, not once per row per relayout
 	local function column(W)
-		local widest = 0
-		for _, n in ipairs(cont._sliderNames) do
-			if n.Parent then widest = math.max(widest, U.measure(n.Text, 13).X * 1.07) end
+		local widest = cont._sliderWidest
+		if not widest then
+			widest = 0
+			for _, n in ipairs(cont._sliderNames) do
+				if n.Parent then widest = math.max(widest, U.measure(n.Text, 13).X * 1.07) end
+			end
+			cont._sliderWidest = widest
 		end
 		return math.clamp(math.ceil(widest) + 4, 70, math.floor(W * 0.45))
 	end
+	cont._sliderWidest = nil
 	name:GetPropertyChangedSignal("Text"):Connect(function()
-		task.defer(function() cont.Tab:_Relayout() end)
+		cont._sliderWidest = nil
+		cont.Tab:_RelayoutSoon()
 	end)
+	row.Destroying:Connect(function() cont._sliderWidest = nil end)
 
 	w:_Watch(self, row, function(W)
 		local valW = 48
@@ -3047,7 +3216,7 @@ function Container:Slider(o: SliderOptions)
 		end
 	end)
 	-- a new slider can widen the column: realign the ones already in this section
-	task.defer(function() cont.Tab:_Relayout() end)
+	cont.Tab:_RelayoutSoon()
 	w:_Index(self, o.Name, name, row)
 	e:Set(o.Default or min, true)
 	w:_Flag(o.Flag, e)
@@ -3218,7 +3387,7 @@ function Window:_DropdownPopup(e, anchor)
 	local searchable = e.Search == true or (e.Search == nil and #opts > 6)
 	local top = searchable and 40 or 4
 	local h = top + math.max(1, math.min(#opts, 7)) * 32 + 6
-	local pop = self:_OpenPopup(anchor, math.max(anchor.AbsoluteSize.X, 170), h)
+	local pop = self:_OpenPopup(anchor, math.max(anchor.AbsoluteSize.X / self:_S(), 170), h)
 	local search
 	if searchable then
 		search = U.new("TextBox", {
@@ -3440,7 +3609,10 @@ function Container:Keybind(o: KeybindOptions)
 	local e = element(row, o)
 	local listening = false
 	function e:Set(v, silent)
-		if type(v) == "string" then v = Enum.KeyCode[v] end
+		if type(v) == "string" then
+			local ok, k = pcall(function() return Enum.KeyCode[v] end)
+			v = ok and k or nil
+		end
 		e.Value = v
 		local short = {
 			LeftControl = "LCtrl", RightControl = "RCtrl", LeftShift = "LShift", RightShift = "RShift",
@@ -3601,7 +3773,7 @@ function Container:Collapsible(o: CollapsibleOptions)
 		body.Visible = v
 		if chev then chev:Destroy() end
 		chev = U.icon(v and "up" or "down", tb, 12, T.Glow, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5) })
-		if v then task.defer(function() self.Tab:_Relayout() end) end
+		if v then self.Tab:_RelayoutSoon() end
 	end
 	c.SetOpen(o.Open ~= false)
 	U.onClick(head, function() c.SetOpen(not c.IsOpen) end)
@@ -3719,6 +3891,17 @@ function Window:SetFPSBoost(on)
 				end
 				if n % 2500 == 0 then task.wait() end
 			end
+			-- forget parts that left the game (streamed out, map changed) so they can be collected
+			while self._fps == saved and not self._destroyed do
+				task.wait(30)
+				if self._fps ~= saved then break end
+				local k = 0
+				for inst in pairs(saved.props) do
+					if inst ~= Svc.Lighting and not inst:IsDescendantOf(game) then saved.props[inst] = nil end
+					k += 1
+					if k % 2500 == 0 then task.wait() end
+				end
+			end
 		end)
 	else
 		local saved = self._fps
@@ -3766,8 +3949,20 @@ function Window:SetHidePlayer(on)
 			if hum then pcall(keep, hum, "DisplayDistanceType", Enum.HumanoidDisplayDistanceType.None) end
 		end
 		apply(lp and lp.Character)
+		st.char = lp and lp.Character
 		if lp then
 			st.conn = lp.CharacterAdded:Connect(function(c)
+				-- the old character is gone: drop what was saved from it (accessories were parented to nil)
+				local old = st.char
+				st.char = c
+				if old then
+					for inst, rec in pairs(st.saved) do
+						local from = rec[1] == "Parent" and rec[2] or inst
+						if typeof(from) ~= "Instance" or from == old or from:IsDescendantOf(old) then
+							st.saved[inst] = nil
+						end
+					end
+				end
 				task.wait(1)
 				apply(c)
 			end)
@@ -3830,7 +4025,7 @@ end
 -- Ready-made "Interface" section with every extra
 function Window:SettingsSection(tab, sectionName)
 	local s = tab:Section({ Name = sectionName or "Interface" })
-	s:Slider({ Name = "UI size", Min = 0.5, Max = 1.5, Step = 0.05, Default = self.UserScale, Suffix = "x", Callback = function(v) self:SetScale(v) end })
+	s:Slider({ Name = "UI size", Min = 0.5, Max = 1.5, Step = 0.05, Default = self.UserScale, Suffix = "x", ApplyOnRelease = true, Callback = function(v) self:SetScale(v) end })
 	s:Keybind({ Name = "Toggle UI key", Default = self.Keybind, Changed = function(k) if k then self:SetKeybind(k) end end })
 	s:Toggle({ Name = "Notifications", Default = self.NotificationsEnabled, Callback = function(v) self:SetNotificationsState(v) end })
 	self._profileToggle = s:Toggle({ Name = "Hide my profile", Description = "Hides your avatar and name on the side panel", Default = self.ProfileHidden, Callback = function(v) self:SetUserInfoHidden(v) end })
@@ -4031,6 +4226,14 @@ function U.gearButton(w, parent, o)
 		end
 	end
 	U.onClick(b, toggle)
+	-- the row is gone: its panel (frame, elements, input connections) goes with it
+	parent.Destroying:Connect(function()
+		local p = w._panels and w._panels[key]
+		if not p then return end
+		if w._openPanel == p then w:ClosePanel() end
+		w._panels[key] = nil
+		pcall(function() p.Frame:Destroy() end)
+	end)
 	return b, toggle, key
 end
 
@@ -4099,11 +4302,13 @@ end
 -- Window:OpenPanel({ Title, Build = function(panel) panel:Toggle(...) end })
 function Window:OpenPanel(o: PanelOptions)
 	self._panels = self._panels or {}
+	local keyless = o.Key == nil or o.Key == o
 	local key = o.Key or o
 	local p = self._panels[key]
 	if not p then
-		o.Key = key
-		p = self:_BuildPanel(o)
+		p = self:_BuildPanel({ Key = key, Title = o.Title, Build = o.Build, OnState = o.OnState })
+		-- without a Key nothing can reopen this exact panel: it is destroyed when closed
+		p.Keyless = keyless
 		self._panels[key] = p
 	end
 	if self._openPanel == p then return p end
@@ -4115,7 +4320,7 @@ function Window:OpenPanel(o: PanelOptions)
 	p.Frame.Visible = true
 	U.tween(p.Frame, 0.22, { Position = target }, Enum.EasingStyle.Quint)
 	if p.OnState then p.OnState(true) end
-	task.defer(function() p.Tab:_Relayout() end)
+	p.Tab:_RelayoutSoon()
 	return p
 end
 
@@ -4126,6 +4331,10 @@ function Window:ClosePanel()
 	self:_ClosePopup()
 	p.Frame.Visible = false
 	if p.OnState then p.OnState(false) end
+	if p.Keyless and self._panels then
+		self._panels[p.Key] = nil
+		pcall(function() p.Frame:Destroy() end)
+	end
 end
 
 -- New option type: a row with a gear that opens the side panel
@@ -4204,6 +4413,10 @@ function Container:ReorderList(o: ReorderListOptions)
 	local function paint(r, i)
 		local lit = e.Active == i or (drag and drag.r == r)
 		local custom = isRich(r.value) and r.value.Color
+		if type(custom) == "string" then -- loaded from a config: saved as "#rrggbb"
+			local ok, c = pcall(Color3.fromHex, custom)
+			custom = ok and c or nil
+		end
 		r.label.Text = textOf(r.value, i)
 		if r.num then
 			r.num.Text = (isRich(r.value) and r.value.Badge) and tostring(r.value.Badge) or tostring(i)
@@ -4400,8 +4613,21 @@ function Container:ReorderList(o: ReorderListOptions)
 		return r
 	end
 
+	local function dropDrag()
+		drag = nil
+		self.Tab.Page.ScrollingEnabled = true
+	end
+	-- the list was destroyed mid-drag: the InputEnded below is already disconnected
+	row.Destroying:Connect(function()
+		if drag then dropDrag() end
+	end)
 	w:_ConnectFor(row, Svc.UserInputService.InputChanged, function(i)
 		if not drag then return end
+		-- rows changed under the drag (Remove/Update from a callback): stop instead of clamping an empty range
+		if #rows == 0 or not table.find(rows, drag.r) then
+			dropDrag()
+			return
+		end
 		if i.UserInputType ~= Enum.UserInputType.MouseMovement and i ~= drag.input then return end
 		local y = math.clamp(drag.base + (i.Position.Y - drag.y) / w:_S(), -10, totalH() - ROW + 10)
 		drag.r.frame.Position = UDim2.fromOffset(0, y)
@@ -4419,7 +4645,8 @@ function Container:ReorderList(o: ReorderListOptions)
 		drag = nil
 		self.Tab.Page.ScrollingEnabled = true
 		lift(r, false)
-		local idx = table.find(rows, r) or 1
+		local idx = table.find(rows, r)
+		if not idx then return end -- removed while dragging
 		U.tween(r.frame, 0.35, { Position = UDim2.fromOffset(0, (idx - 1) * STEP) }, Enum.EasingStyle.Back)
 		if idx ~= from then U.safe(o.OnMove, r.value, from, idx) end
 		changed()
@@ -4435,7 +4662,7 @@ function Container:ReorderList(o: ReorderListOptions)
 	function e:Set(items, silent)
 		for _, r in ipairs(rows) do r.frame:Destroy() end
 		rows = {}
-		drag = nil
+		if drag then dropDrag() end
 		items = type(items) == "table" and items or {}
 		for i, v in ipairs(items) do table.insert(rows, makeRow(v, i)) end
 		e.Items = table.clone(items)

@@ -85,7 +85,7 @@ Every element is available on a `Section` and on a `Collapsible`. Elements that 
 | Element | Options | Extra methods |
 | --- | --- | --- |
 | `Toggle` | `Name, Description?, Default, Flag, Callback(bool)` | |
-| `Slider` | `Name, Min, Max, Step, Default, Suffix?, Flag, Callback(number)` | |
+| `Slider` | `Name, Min, Max, Step, Default, Suffix?, ApplyOnRelease?, Flag, Callback(number)` | `ApplyOnRelease = true`: callback só ao soltar o arraste |
 | `Input` | `Name, Placeholder?, Default?, Numeric?, Live?, Width?, Flag, Callback(text)` | |
 | `Dropdown` | `Name, Options, Default?, Multi?, Placeholder?, Width?, Search?, Flag, Callback(value \| {values})` | `:Refresh(options, keepSelection?)` |
 | `Button` | `Name, Primary?, Callback()` | `:SetText(text)` |
