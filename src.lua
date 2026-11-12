@@ -717,7 +717,14 @@ do
 		Tr.Pending = {}
 		if lang == "en" or #list == 0 then return end
 		task.spawn(function()
-			Tr.Fetch(lang, list)
+			local lastApply = 0
+			Tr.Fetch(lang, list, function()
+				-- show what is already translated every ~1.5 s instead of waiting for every text
+				if Tr.Lang == lang and os.clock() - lastApply > 1.5 then
+					lastApply = os.clock()
+					Tr.Apply()
+				end
+			end)
 			Tr.Save(lang)
 			if Tr.Lang == lang then Tr.Apply() end
 		end)
@@ -742,7 +749,7 @@ do
 		return (s:gsub("^%s+", ""):gsub("%s+$", ""))
 	end
 
-	function Tr.Fetch(lang, texts)
+	function Tr.Fetch(lang, texts, onChunk)
 		Tr.Load(lang)
 		local cache = Tr.Cache[lang]
 		Tr.Failed[lang] = Tr.Failed[lang] or {}
@@ -764,13 +771,15 @@ do
 				for _, s in ipairs(chunk) do single(s) end
 			end
 			chunk, size = {}, 0
+			if onChunk then onChunk() end
 		end
 
 		for _, s in ipairs(texts) do
+			if Tr.Lang ~= lang then return end -- language changed again: stop fetching the old one
 			if s:find("\n", 1, true) then
 				single(s)
 			else
-				if size + #s > 1400 then flush() end
+				if size + #s > 600 then flush() end
 				table.insert(chunk, s)
 				size += #s + 1
 			end
@@ -934,6 +943,13 @@ function Window:_BuildShell()
 		IgnoreGuiInset = true,
 	})
 	pcall(function() gui.ScreenInsets = Enum.ScreenInsets.DeviceSafeInsets end)
+	-- the Roblox auto-translator was translating short labels ("Wave" -> "Acenar") even in English:
+	-- the window has its own translator, so Roblox localization is off for every element
+	local function noLocalize(o)
+		if o:IsA("GuiBase2d") then pcall(function() o.AutoLocalize = false end) end
+	end
+	noLocalize(gui)
+	gui.DescendantAdded:Connect(noLocalize)
 	U.guiParent(gui)
 	self.Gui = gui
 
