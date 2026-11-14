@@ -102,6 +102,7 @@ export type WindowOptions = {
 	FloatingButton: boolean?,
 	FloatImage: string?,
 	StartHidden: boolean?,
+	CustomCursor: boolean?,
 }
 
 -- fields every named row understands (Settings adds a gear that opens the side panel)
@@ -934,6 +935,7 @@ function Nebula:Window(o: WindowOptions?)
 	self._globals = {}
 	self.HideNotice = o.HideNotice ~= false
 	self.BlackHole = o.BlackHole -- false = plain fade/scale instead of the black hole animation
+	self.CustomCursor = o.CustomCursor ~= false -- own cursor drawn above every game GUI while open
 
 	FS.mkdir(self.Folder .. "/configs")
 	self.Settings = FS.readJSON(self.Folder .. "/nebula.json") or {}
@@ -950,6 +952,7 @@ function Nebula:Window(o: WindowOptions?)
 	self:_BuildHeader()
 	self:_BuildFloat(o)
 	self:_BuildNotifications()
+	self:_BuildCursor()
 
 	self:_Connect(self.Gui:GetPropertyChangedSignal("AbsoluteSize"), function() self:_Layout() end)
 	self:_Connect(Svc.UserInputService.InputBegan, function(i, gp) self:_OnKey(i, gp) end)
@@ -1444,6 +1447,108 @@ function Window:_ClampFloat()
 		math.clamp(fb.Position.X.Offset, 4, math.max(4, scr.X - s.X - 4)),
 		math.clamp(fb.Position.Y.Offset, 4, math.max(4, scr.Y - s.Y - 4))
 	)
+end
+
+-- cursor always on top: some games hide the Roblox cursor and draw their own in a ScreenGui
+-- under ours, or lock it in the center. While the window is open (or the mouse is over the
+-- floating button) we draw our own arrow above everything and free the mouse.
+local CURSOR_IMG = "rbxasset://textures/Cursors/KeyboardMouse/ArrowFarCursor.png"
+function Window:_BuildCursor()
+	local uis = Svc.UserInputService
+	local gui = U.new("ScreenGui", {
+		Name = "NebulaCursor",
+		ResetOnSpawn = false,
+		IgnoreGuiInset = true,
+		DisplayOrder = 2147483647,
+		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+	})
+	pcall(function() gui.ScreenInsets = Enum.ScreenInsets.None end)
+	U.guiParent(gui)
+	self.CursorGui = gui
+	local img = U.new("ImageLabel", {
+		Parent = gui,
+		Name = "Arrow",
+		BackgroundTransparency = 1,
+		Image = CURSOR_IMG,
+		AnchorPoint = Vector2.new(0.5, 0.5), -- Roblox cursor images have the tip in the center
+		Size = UDim2.fromOffset(64, 64),
+		Visible = false,
+		ZIndex = 10,
+	})
+	-- fallback if the arrow image doesn't load in this game
+	local dot = U.new("Frame", {
+		Parent = gui,
+		Name = "Dot",
+		BackgroundColor3 = T.Accent,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Size = UDim2.fromOffset(10, 10),
+		Visible = false,
+		ZIndex = 10,
+	})
+	U.corner(dot, 5)
+	U.stroke(dot, Color3.new(1, 1, 1), 0, 1.5)
+	-- a visible Modal button makes Roblox release a mouse locked by the camera (first person / shift lock)
+	local modal = U.new("TextButton", {
+		Parent = gui,
+		Name = "Modal",
+		Text = "",
+		BackgroundTransparency = 1,
+		AutoButtonColor = false,
+		Size = UDim2.fromOffset(0, 0),
+		Modal = true,
+		Visible = false,
+	})
+	local useDot = false
+	task.delay(3, function()
+		if not self._destroyed and not img.IsLoaded then useDot = true end
+	end)
+
+	local shown, taken, prevIcon = false, false, true
+	local function release()
+		if not shown then return end
+		shown = false
+		img.Visible, dot.Visible, modal.Visible = false, false, false
+		if taken then
+			taken = false
+			pcall(function() uis.MouseIconEnabled = prevIcon end)
+		end
+	end
+	self._releaseCursor = release
+
+	self:_Connect(Svc.RunService.RenderStepped, function()
+		local m = uis:GetMouseLocation()
+		local open = self.Visible and self.Holder.Visible
+		local overFloat = false
+		local fb = self.Float
+		if not open and fb and fb.Visible and fb.Parent then
+			local p, s = fb.AbsolutePosition, fb.AbsoluteSize
+			overFloat = m.X >= p.X and m.Y >= p.Y and m.X <= p.X + s.X and m.Y <= p.Y + s.Y
+		end
+		local mouse = uis.MouseEnabled and uis:GetLastInputType() ~= Enum.UserInputType.Touch
+		if not (self.CustomCursor and mouse and not self._menuOpen and (open or overFloat)) then
+			release()
+			return
+		end
+		shown = true
+		modal.Visible = open
+		if open and uis.MouseBehavior ~= Enum.MouseBehavior.Default then
+			pcall(function() uis.MouseBehavior = Enum.MouseBehavior.Default end)
+		end
+		-- the system cursor is hidden so it doesn't trail one frame behind ours
+		if not taken then
+			taken = true
+			prevIcon = uis.MouseIconEnabled
+		end
+		if uis.MouseIconEnabled then pcall(function() uis.MouseIconEnabled = false end) end
+		local c, other = img, dot
+		if useDot then c, other = dot, img end
+		c.Position = UDim2.fromOffset(m.X, m.Y)
+		c.Visible, other.Visible = true, false
+	end)
+end
+
+function Window:SetCustomCursor(on)
+	self.CustomCursor = on ~= false
 end
 
 function Window:_BuildNotifications()
@@ -2304,6 +2409,8 @@ function Window:Destroy()
 	pcall(function() self:SetFPSBoost(false) end)
 	pcall(function() self:SetHidePlayer(false) end)
 	if self._settingsDirty then pcall(function() self:_SaveSettingsNow() end) end
+	if self._releaseCursor then pcall(self._releaseCursor) end
+	if self.CursorGui then pcall(function() self.CursorGui:Destroy() end) end
 	for _, c in ipairs(self._conns) do pcall(function() c:Disconnect() end) end
 	self._conns = {}
 	-- drop this window's translated labels now instead of waiting for the next language change

@@ -38,6 +38,7 @@ local Window = Nebula:Window({
 	StartHidden = false,
 	CloseConfirm = true,
 	BlackHole = true,                  -- UI torn apart into / spat out of the floating button
+	CustomCursor = true,               -- while open, own cursor above every game GUI + mouse unlocked
 })
 ```
 
@@ -48,6 +49,7 @@ local Window = Nebula:Window({
 | `Window:Notify({ Title, Content?, Duration?, Icon?, Translate? })` | Toast at the bottom right |
 | `Window:Dialog({ Title, Content?, Buttons = {{ Name, Primary?, Callback? }} })` | Modal dialog |
 | `Window:SetVisible(bool)` / `Window:Toggle()` | Show or hide the window |
+| `Window:SetCustomCursor(bool)` | Turns the always-on-top cursor on or off |
 | `Window:SetKeybind(KeyCode)` | Changes the toggle key |
 | `Window:SetLanguage("pt")` | Changes the language |
 | `Window:SaveConfig(name)` / `LoadConfig` / `DeleteConfig` / `ListConfigs()` | Configs (every element with a `Flag`) |
