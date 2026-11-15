@@ -38,7 +38,7 @@ local Window = Nebula:Window({
 	StartHidden = false,
 	CloseConfirm = true,
 	BlackHole = true,                  -- UI torn apart into / spat out of the floating button
-	CustomCursor = true,               -- while open, own cursor above every game GUI + mouse unlocked
+	CustomCursor = true,               -- while open: cursor above every game GUI (if the game hid it) + mouse unlocked
 })
 ```
 

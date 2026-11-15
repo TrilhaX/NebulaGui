@@ -1450,8 +1450,9 @@ function Window:_ClampFloat()
 end
 
 -- cursor always on top: some games hide the Roblox cursor and draw their own in a ScreenGui
--- under ours, or lock it in the center. While the window is open (or the mouse is over the
--- floating button) we draw our own arrow above everything and free the mouse.
+-- under ours. The system cursor is already drawn above every GUI, so it is never touched;
+-- only when the game hid it, and the window is open (or the mouse is over the floating
+-- button), we draw our own arrow above everything. A locked mouse is freed with a Modal button.
 local CURSOR_IMG = "rbxasset://textures/Cursors/KeyboardMouse/ArrowFarCursor.png"
 function Window:_BuildCursor()
 	local uis = Svc.UserInputService
@@ -1503,17 +1504,13 @@ function Window:_BuildCursor()
 		if not self._destroyed and not img.IsLoaded then useDot = true end
 	end)
 
-	local shown, taken, prevIcon = false, false, true
-	local function release()
+	local shown = false
+	local function hide()
 		if not shown then return end
 		shown = false
 		img.Visible, dot.Visible, modal.Visible = false, false, false
-		if taken then
-			taken = false
-			pcall(function() uis.MouseIconEnabled = prevIcon end)
-		end
 	end
-	self._releaseCursor = release
+	self._releaseCursor = hide
 
 	self:_Connect(Svc.RunService.RenderStepped, function()
 		local m = uis:GetMouseLocation()
@@ -1526,24 +1523,18 @@ function Window:_BuildCursor()
 		end
 		local mouse = uis.MouseEnabled and uis:GetLastInputType() ~= Enum.UserInputType.Touch
 		if not (self.CustomCursor and mouse and not self._menuOpen and (open or overFloat)) then
-			release()
+			hide()
 			return
 		end
 		shown = true
-		modal.Visible = open
-		if open and uis.MouseBehavior ~= Enum.MouseBehavior.Default then
-			pcall(function() uis.MouseBehavior = Enum.MouseBehavior.Default end)
-		end
-		-- the system cursor is hidden so it doesn't trail one frame behind ours
-		if not taken then
-			taken = true
-			prevIcon = uis.MouseIconEnabled
-		end
-		if uis.MouseIconEnabled then pcall(function() uis.MouseIconEnabled = false end) end
+		if modal.Visible ~= open then modal.Visible = open end
+		-- only draw ours when the game hid the system cursor (never change MouseIconEnabled)
+		local need = not uis.MouseIconEnabled
 		local c, other = img, dot
 		if useDot then c, other = dot, img end
-		c.Position = UDim2.fromOffset(m.X, m.Y)
-		c.Visible, other.Visible = true, false
+		if need then c.Position = UDim2.fromOffset(m.X, m.Y) end
+		if c.Visible ~= need then c.Visible = need end
+		if other.Visible then other.Visible = false end
 	end)
 end
 
