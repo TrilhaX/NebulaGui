@@ -2399,6 +2399,7 @@ function Window:Destroy()
 	pcall(function() self:SetLowCpu(false) end)
 	pcall(function() self:SetFPSBoost(false) end)
 	pcall(function() self:SetHidePlayer(false) end)
+	pcall(function() self:SetWearCharacter(nil) end)
 	if self._settingsDirty then pcall(function() self:_SaveSettingsNow() end) end
 	if self._releaseCursor then pcall(self._releaseCursor) end
 	if self.CursorGui then pcall(function() self.CursorGui:Destroy() end) end
@@ -4136,6 +4137,496 @@ function Window:SettingsSection(tab, sectionName)
 	s:Button({ Name = "Hide interface", Callback = function() self:SetVisible(false) end })
 	s:Button({ Name = "Close interface", Callback = function() self:Close() end })
 	return s
+end
+
+---------------------------------------------------------------------------
+-- Custom Characters: wear any catalog character (bundle) — only you see it
+---------------------------------------------------------------------------
+do
+	local CHAR_TAXONOMY = "kfHzJwaNYM8s2CWRqYUhRa" -- catalog > Characters
+	local CACHE_FILE = "NebulaGui/characters.json"
+	local CACHE_TTL = 6 * 3600
+	local MAX_PAGES = 15
+
+	-- lista compartilhada entre janelas: { names = {...}, ids = { [name] = id } }
+	local Catalog = { names = {}, ids = {}, loading = false, done = false, listeners = {} }
+
+	local function decode(s)
+		if type(s) ~= "string" then return nil end
+		local ok, d = pcall(Svc.HttpService.JSONDecode, Svc.HttpService, s)
+		return ok and d or nil
+	end
+
+	local function catalogAdd(name, id)
+		if type(name) ~= "string" or not tonumber(id) then return end
+		id = tonumber(id)
+		if Catalog.ids[name] and Catalog.ids[name] ~= id then name = name .. " (" .. id .. ")" end
+		if Catalog.ids[name] then return end
+		Catalog.ids[name] = id
+		table.insert(Catalog.names, name)
+	end
+
+	local function catalogNotify()
+		for _, fn in ipairs(Catalog.listeners) do pcall(fn) end
+	end
+
+	local function catalogLoad()
+		if Catalog.loading or Catalog.done then return end
+		Catalog.loading = true
+		local cache = FS.readJSON(CACHE_FILE)
+		if cache and type(cache.items) == "table" and #cache.items > 0 then
+			for _, it in ipairs(cache.items) do catalogAdd(it[1], it[2]) end
+			catalogNotify()
+			if tonumber(cache.time) and os.time() - cache.time < CACHE_TTL then
+				Catalog.loading, Catalog.done = false, true
+				return
+			end
+		end
+		task.spawn(function()
+			local fresh, cursor = {}, ""
+			for _ = 1, MAX_PAGES do
+				local url = "https://catalog.roblox.com/v2/search/items/details?Taxonomy=" .. CHAR_TAXONOMY
+					.. "&SalesTypeFilter=1&SortType=1&Limit=120" .. (cursor ~= "" and ("&Cursor=" .. cursor) or "")
+				local ok, body = pcall(U.httpGet, url)
+				local d = ok and decode(body)
+				if type(d) ~= "table" or type(d.data) ~= "table" then break end
+				for _, it in ipairs(d.data) do
+					if it.itemType == "Bundle" or it.itemType == nil then
+						table.insert(fresh, { it.name, it.id })
+						catalogAdd(it.name, it.id)
+					end
+				end
+				catalogNotify()
+				cursor = type(d.nextPageCursor) == "string" and d.nextPageCursor or ""
+				if cursor == "" then break end
+				task.wait(0.35)
+			end
+			if #fresh > 0 then
+				FS.mkdir("NebulaGui")
+				FS.writeJSON(CACHE_FILE, { time = os.time(), items = fresh })
+			end
+			Catalog.loading, Catalog.done = false, #fresh > 0
+		end)
+	end
+
+	-- "123", "roblox.com/bundles/123/Name", "https://www.roblox.com/bundles/123" -> 123
+	local function parseBundleId(v)
+		if type(v) == "number" then return v end
+		if type(v) ~= "string" then return nil end
+		return tonumber(string.match(v, "bundles?/(%d+)") or string.match(v, "^%s*(%d+)%s*$"))
+	end
+
+	local function bundleDetails(id)
+		local ok, d = pcall(function() return Svc.AssetService:GetBundleDetailsAsync(id) end)
+		if ok and type(d) == "table" and type(d.Items) == "table" then return d end
+		local ok2, body = pcall(U.httpGet, "https://catalog.roblox.com/v1/bundles/" .. id .. "/details")
+		local j = ok2 and decode(body)
+		if type(j) ~= "table" or type(j.items) ~= "table" then return nil end
+		local items = {}
+		for _, it in ipairs(j.items) do table.insert(items, { Id = it.id, Name = it.name, Type = it.type }) end
+		return { Name = j.name, Items = items }
+	end
+
+	local function getObjects(id)
+		local ok, r = pcall(function() return game:GetObjects("rbxassetid://" .. id) end)
+		return (ok and type(r) == "table") and r or {}
+	end
+
+	local R15 = {
+		Head = true, UpperTorso = true, LowerTorso = true,
+		LeftUpperArm = true, LeftLowerArm = true, LeftHand = true,
+		RightUpperArm = true, RightLowerArm = true, RightHand = true,
+		LeftUpperLeg = true, LeftLowerLeg = true, LeftFoot = true,
+		RightUpperLeg = true, RightLowerLeg = true, RightFoot = true,
+	}
+
+	-- baixa tudo do pacote: partes do corpo (R15 e R6), acessórios, roupas, rosto, cores
+	local function loadBundle(id)
+		local det = bundleDetails(id)
+		if not det then return nil, "Couldn't read this bundle" end
+		local ids, seen, outfitId = {}, {}, nil
+		local function add(a)
+			a = tonumber(a)
+			if a and a > 0 and not seen[a] then seen[a] = true table.insert(ids, a) end
+		end
+		for _, it in ipairs(det.Items) do
+			if it.Type == "UserOutfit" then outfitId = it.Id elseif it.Type == "Asset" then add(it.Id) end
+		end
+		local desc
+		if outfitId then
+			local ok, d = pcall(function() return Svc.Players:GetHumanoidDescriptionFromOutfitId(outfitId) end)
+			if ok and typeof(d) == "Instance" then desc = d end
+		end
+		if desc then
+			for _, prop in ipairs({ "Shirt", "Pants", "GraphicTShirt", "Face", "Head", "Torso", "LeftArm", "RightArm", "LeftLeg", "RightLeg" }) do
+				pcall(function() add(desc[prop]) end)
+			end
+			pcall(function()
+				for _, acc in ipairs(desc:GetAccessories(true)) do add(acc.AssetId) end
+			end)
+		end
+		local out = { name = det.Name, parts = {}, partsFixed = {}, r6 = {}, accessories = {}, clothes = {}, desc = desc }
+		for _, a in ipairs(ids) do
+			for _, obj in ipairs(getObjects(a)) do
+				local list = obj:GetDescendants()
+				table.insert(list, 1, obj)
+				for _, d in ipairs(list) do
+					local folder = d.Parent and d.Parent.Name or ""
+					if d:IsA("Accessory") then
+						table.insert(out.accessories, d)
+					elseif d:IsA("Shirt") or d:IsA("Pants") or d:IsA("ShirtGraphic") then
+						table.insert(out.clothes, d)
+					elseif d:IsA("Decal") and d.Name == "face" and not (d.Parent and d.Parent:IsA("BasePart")) then
+						out.face = d
+					elseif d:IsA("CharacterMesh") then
+						table.insert(out.r6, d)
+					elseif d:IsA("MeshPart") and R15[d.Name] and not d:FindFirstAncestorOfClass("Accessory") then
+						if folder == "R15Fixed" then out.partsFixed[d.Name] = d
+						elseif folder == "R15ArtistIntent" or out.parts[d.Name] == nil then out.parts[d.Name] = d end
+					end
+				end
+			end
+		end
+		for k, v in pairs(out.partsFixed) do
+			if out.parts[k] == nil then out.parts[k] = v end
+		end
+		if next(out.parts) == nil and #out.r6 == 0 and #out.accessories == 0 then
+			return nil, "This bundle has nothing to wear"
+		end
+		return out
+	end
+
+	local function attachAccessory(model, acc)
+		local h = acc:FindFirstChild("Handle")
+		if not (h and h:IsA("BasePart")) then return end
+		h.Anchored, h.CanCollide, h.CanQuery, h.CanTouch, h.Massless = false, false, false, false, true
+		local att = h:FindFirstChildOfClass("Attachment")
+		local target, part
+		if att then
+			for _, p in ipairs(model:GetChildren()) do
+				if p:IsA("BasePart") then
+					local t = p:FindFirstChild(att.Name)
+					if t and t:IsA("Attachment") then target, part = t, p break end
+				end
+			end
+		end
+		part = part or model:FindFirstChild("Head")
+		if not part then return end
+		for _, w in ipairs(h:GetChildren()) do
+			if w:IsA("JointInstance") or w:IsA("WeldConstraint") then w:Destroy() end
+		end
+		acc.Parent = model
+		local weld = Instance.new("Weld")
+		weld.Name = "AccessoryWeld"
+		weld.Part0, weld.Part1 = h, part
+		weld.C0 = att and att.CFrame or CFrame.new()
+		weld.C1 = target and target.CFrame or (acc.AttachmentPoint or CFrame.new()):Inverse()
+		weld.Parent = h
+	end
+
+	-- monta um boneco R15 só seu: clone do seu personagem com as partes do pacote
+	local function buildPuppet(char, b)
+		char.Archivable = true
+		local ok, model = pcall(function() return char:Clone() end)
+		if not ok or not model then return nil end
+		for _, d in ipairs(model:GetDescendants()) do
+			if d:IsA("LuaSourceContainer") or d:IsA("Accessory") or d:IsA("Clothing") or d:IsA("ShirtGraphic")
+				or d:IsA("BillboardGui") or d:IsA("Sound") or d:IsA("ForceField") or d:IsA("ParticleEmitter")
+				or d:IsA("Tool") or d:IsA("Animator") or d:IsA("BodyColors") then
+				pcall(function() d:Destroy() end)
+			end
+		end
+		-- troca as partes do corpo pelas do pacote (anexos de rig vêm junto)
+		for name, src in pairs(b.parts) do
+			local old = model:FindFirstChild(name)
+			if old and old:IsA("BasePart") then
+				local new = src:Clone()
+				new.Name = name
+				for _, k in ipairs(old:GetChildren()) do
+					if k:IsA("Motor6D") then k.Parent = new
+					elseif k:IsA("Decal") and name == "Head" and not b.face and src:FindFirstChildOfClass("Decal") == nil then k.Parent = new end
+				end
+				for _, j in ipairs(model:GetDescendants()) do
+					if j:IsA("JointInstance") then
+						if j.Part0 == old then j.Part0 = new end
+						if j.Part1 == old then j.Part1 = new end
+					end
+				end
+				new.Parent = model
+				old:Destroy()
+			end
+		end
+		-- refaz as juntas a partir dos RigAttachments (proporções do pacote)
+		for _, m in ipairs(model:GetDescendants()) do
+			if m:IsA("Motor6D") and m.Part0 and m.Part1 then
+				local a0 = m.Part0:FindFirstChild(m.Name .. "RigAttachment")
+				local a1 = m.Part1:FindFirstChild(m.Name .. "RigAttachment")
+				if a0 and a1 then m.C0, m.C1 = a0.CFrame, a1.CFrame end
+			end
+		end
+		local head = model:FindFirstChild("Head")
+		if b.face and head and not head:FindFirstChildOfClass("FaceControls") then
+			for _, d in ipairs(head:GetChildren()) do if d:IsA("Decal") then d:Destroy() end end
+			b.face:Clone().Parent = head
+		end
+		for _, c in ipairs(b.clothes) do c:Clone().Parent = model end
+		if b.desc then
+			local bc = Instance.new("BodyColors")
+			pcall(function()
+				bc.HeadColor3, bc.TorsoColor3 = b.desc.HeadColor, b.desc.TorsoColor
+				bc.LeftArmColor3, bc.RightArmColor3 = b.desc.LeftArmColor, b.desc.RightArmColor
+				bc.LeftLegColor3, bc.RightLegColor3 = b.desc.LeftLegColor, b.desc.RightLegColor
+			end)
+			bc.Parent = model
+		end
+		for _, a in ipairs(b.accessories) do attachAccessory(model, a:Clone()) end
+		for _, p in ipairs(model:GetDescendants()) do
+			if p:IsA("BasePart") then
+				p.Anchored, p.CanCollide, p.CanQuery, p.CanTouch, p.Massless = false, false, false, false, true
+				p.CastShadow = true
+				p.LocalTransparencyModifier = 0
+				if p.Name == "HumanoidRootPart" then p.Transparency = 1 end
+			end
+		end
+		local hum = model:FindFirstChildOfClass("Humanoid")
+		if hum then
+			hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+			hum.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
+			pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.Dead, false) end)
+			hum.PlatformStand = true
+		end
+		model.Name = "NebulaCharacter"
+		return model
+	end
+
+	local function rootOf(model) return model:FindFirstChild("HumanoidRootPart") end
+
+	-- altura do pé até o centro do HumanoidRootPart, em pose de repouso
+	local function footDepth(model, root)
+		local low = math.huge
+		for _, p in ipairs(model:GetDescendants()) do
+			if p:IsA("BasePart") and p ~= root and not p:FindFirstAncestorOfClass("Accessory") then
+				local y = p.Position.Y - p.Size.Y / 2
+				if y < low then low = y end
+			end
+		end
+		return low == math.huge and 3 or (root.Position.Y - low)
+	end
+
+	-- esconde seu personagem real (guardando os valores para restaurar)
+	local function hideReal(st, char)
+		local function keep(inst, prop, value)
+			if st.saved[inst] == nil then st.saved[inst] = {} end
+			if st.saved[inst][prop] == nil then st.saved[inst][prop] = inst[prop] end
+			inst[prop] = value
+		end
+		for _, d in ipairs(char:GetDescendants()) do
+			if d:IsA("BasePart") and not d:FindFirstAncestorOfClass("Tool") then
+				pcall(keep, d, "Transparency", 1)
+			elseif (d:IsA("Decal") or d:IsA("Texture")) and not d:FindFirstAncestorOfClass("Tool") then
+				pcall(keep, d, "Transparency", 1)
+			elseif d:IsA("SurfaceAppearance") then
+				pcall(keep, d, "Parent", nil)
+			end
+		end
+		table.insert(st.conns, char.DescendantAdded:Connect(function(d)
+			task.defer(function()
+				if not st.alive then return end
+				if d:IsA("BasePart") and not d:FindFirstAncestorOfClass("Tool") and d.Name ~= "Handle" then
+					pcall(keep, d, "Transparency", 1)
+				elseif d:IsA("Accessory") then
+					for _, p in ipairs(d:GetDescendants()) do
+						if p:IsA("BasePart") then pcall(keep, p, "Transparency", 1) end
+					end
+				end
+			end)
+		end))
+	end
+
+	local function restore(st)
+		st.alive = false
+		for _, c in ipairs(st.conns) do pcall(function() c:Disconnect() end) end
+		st.conns = {}
+		for inst, props in pairs(st.saved) do
+			for prop, v in pairs(props) do pcall(function() inst[prop] = v end) end
+		end
+		st.saved = {}
+		if st.puppet then pcall(function() st.puppet:Destroy() end) st.puppet = nil end
+	end
+
+	-- R6: aplica CharacterMesh/roupas/acessórios direto no personagem (local)
+	local function wearR6(st, char, b)
+		for _, d in ipairs(char:GetChildren()) do
+			if d:IsA("Accessory") or d:IsA("Clothing") or d:IsA("ShirtGraphic") or d:IsA("CharacterMesh") then
+				st.saved[d] = { Parent = char }
+				d.Parent = nil
+			end
+		end
+		local added = {}
+		for _, m in ipairs(b.r6) do local c = m:Clone() c.Parent = char table.insert(added, c) end
+		for _, c in ipairs(b.clothes) do local x = c:Clone() x.Parent = char table.insert(added, x) end
+		for _, a in ipairs(b.accessories) do
+			local x = a:Clone()
+			table.insert(added, x)
+			local hum = char:FindFirstChildOfClass("Humanoid")
+			if not (hum and pcall(function() hum:AddAccessory(x) end)) then attachAccessory(char, x) end
+		end
+		local head = char:FindFirstChild("Head")
+		if b.face and head then
+			for _, d in ipairs(head:GetChildren()) do
+				if d:IsA("Decal") then st.saved[d] = { Parent = head } d.Parent = nil end
+			end
+			local f = b.face:Clone()
+			f.Parent = head
+			table.insert(added, f)
+		end
+		table.insert(st.conns, { Disconnect = function()
+			for _, x in ipairs(added) do pcall(function() x:Destroy() end) end
+		end })
+	end
+
+	local function wearR15(st, char, b)
+		local realRoot = char:WaitForChild("HumanoidRootPart", 5)
+		local realHum = char:FindFirstChildOfClass("Humanoid")
+		if not (realRoot and realHum) then return false end
+		local puppet = buildPuppet(char, b)
+		if not puppet then return false end
+		local root = rootOf(puppet)
+		if not root then puppet:Destroy() return false end
+		root.Anchored = true
+		root.CFrame = CFrame.new(0, 5000, 0)
+		puppet.Parent = workspace
+		st.puppet = puppet
+		Svc.RunService.Heartbeat:Wait()
+		local dy = footDepth(puppet, root) - footDepth(char, realRoot)
+		-- motores reais -> motores do boneco (pelo nome)
+		local pairsList = {}
+		for _, m in ipairs(char:GetDescendants()) do
+			if m:IsA("Motor6D") and m.Parent then
+				local pp = puppet:FindFirstChild(m.Parent.Name)
+				local pm = pp and pp:FindFirstChild(m.Name)
+				if pm and pm:IsA("Motor6D") then table.insert(pairsList, { m, pm }) end
+			end
+		end
+		hideReal(st, char)
+		local function step()
+			if not (st.alive and realRoot.Parent and puppet.Parent) then return end
+			root.CFrame = realRoot.CFrame * CFrame.new(0, dy, 0)
+			for _, pr in ipairs(pairsList) do pr[2].Transform = pr[1].Transform end
+		end
+		table.insert(st.conns, Svc.RunService.Stepped:Connect(step))
+		table.insert(st.conns, Svc.RunService.RenderStepped:Connect(step))
+		table.insert(st.conns, realHum.Died:Connect(function()
+			if st.puppet then pcall(function() st.puppet:BreakJoints() end) end
+		end))
+		return true
+	end
+
+	function Window:_WearOn(char, bundle)
+		local st = self._wear
+		if not st or not char then return end
+		restore(st)
+		st.alive = true
+		local hum = char:WaitForChild("Humanoid", 10)
+		if not hum or self._wear ~= st then return end
+		local ok = false
+		if hum.RigType == Enum.HumanoidRigType.R15 and next(bundle.parts) ~= nil then
+			ok = wearR15(st, char, bundle)
+		end
+		if not ok then wearR6(st, char, bundle) end
+	end
+
+	-- Wear a catalog character. id = bundle id or URL; false/nil takes it off.
+	function Window:SetWearCharacter(id)
+		local bid = parseBundleId(id)
+		local lp = Svc.Players.LocalPlayer
+		if self._wear then
+			local st = self._wear
+			self._wear = nil
+			restore(st)
+			if st.charConn then st.charConn:Disconnect() end
+		end
+		if not bid then return true end
+		local st = { saved = {}, conns = {}, alive = false, id = bid }
+		self._wear = st
+		local bundle, err = loadBundle(bid)
+		if self._wear ~= st then return false end
+		if not bundle then
+			self._wear = nil
+			self:Notify({ Title = "Custom Character", Content = err or "Couldn't load this character.", Icon = "info" })
+			return false, err
+		end
+		st.bundle = bundle
+		self:_WearOn(lp.Character, bundle)
+		st.charConn = lp.CharacterAdded:Connect(function(c)
+			task.wait(0.5)
+			if self._wear == st then self:_WearOn(c, bundle) end
+		end)
+		return true
+	end
+	Window.WearCharacter = Window.SetWearCharacter
+
+	function Window:GetCharacterList()
+		catalogLoad()
+		return table.clone(Catalog.names), Catalog.ids
+	end
+
+	-- Ready-made "Custom Characters" section
+	function Window:CustomCharacterSection(tab, sectionName)
+		catalogLoad()
+		local s = tab:Section({ Name = sectionName or "Custom Characters" })
+		local w = self
+		local picked = nil -- bundle id escolhido por último (lista ou link)
+		local wearing = false
+		local function apply()
+			if not wearing then w:SetWearCharacter(nil) return end
+			if not picked then
+				w:Notify({ Title = "Custom Character", Content = "Pick a character or paste a bundle link first.", Icon = "info" })
+				return
+			end
+			task.spawn(function()
+				if w._wear and w._wear.id == picked then return end
+				w:SetWearCharacter(picked)
+			end)
+		end
+		local dd = s:Dropdown({
+			Name = "Character",
+			Options = table.clone(Catalog.names),
+			Placeholder = "Pick a character",
+			Search = true,
+			Flag = "Nebula_CustomCharacter",
+			Callback = function(v)
+				local id = type(v) == "string" and Catalog.ids[v]
+				if id then picked = id apply() end
+			end,
+		})
+		local function refresh()
+			if not dd or self._destroyed then return "remove" end
+			dd:Refresh(table.clone(Catalog.names), true)
+		end
+		table.insert(Catalog.listeners, refresh)
+		self:OnUnload(function()
+			local i = table.find(Catalog.listeners, refresh)
+			if i then table.remove(Catalog.listeners, i) end
+		end)
+		s:Input({
+			Name = "Custom Character",
+			Placeholder = "roblox.com/bundles/...",
+			Flag = "Nebula_CustomCharacterLink",
+			Callback = function(t)
+				local id = parseBundleId(t)
+				if id then picked = id apply()
+				elseif t ~= "" then w:Notify({ Title = "Custom Character", Content = "Paste a bundle link or id.", Icon = "info" }) end
+			end,
+		})
+		self._wearToggle = s:Toggle({
+			Name = "Wear Character",
+			Description = "Only you see it",
+			Flag = "Nebula_WearCharacter",
+			Callback = function(v) wearing = v apply() end,
+		})
+		return s
+	end
 end
 
 ---------------------------------------------------------------------------

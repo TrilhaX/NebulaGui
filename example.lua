@@ -92,6 +92,7 @@ ab:InfoBox({
 -- Configs + interface extras (UI size, hide, low CPU, FPS boost, hide character…) ---
 Window:ConfigSection(Settings)
 Window:SettingsSection(Settings)
+Window:CustomCharacterSection(Settings)
 
 local look = Settings:Section({ Name = "Look" })
 look:Header("Colors")

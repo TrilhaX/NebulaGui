@@ -68,6 +68,9 @@ local Window = Nebula:Window({
 | `Window:SetHidePlayer(bool)` | Hides your name tag, face, clothes and accessories locally; reversible |
 | `Window:GlobalSetting({ Name, Default, Callback })` | Switch in the top-bar quick menu; returns `:Set/:Get` |
 | `Window:SettingsSection(tab)` | Ready-made "Interface" section with all of the above |
+| `Window:CustomCharacterSection(tab, name?)` | Ready-made "Custom Characters" section: pick any catalog character (or paste a `roblox.com/bundles/...` link) and wear it. Only you see it; it comes back after respawn |
+| `Window:SetWearCharacter(idOrLink)` / `SetWearCharacter(nil)` | Wears a bundle by id or link, or takes it off |
+| `Window:GetCharacterList()` | Names and ids of the catalog characters (loaded in the background, cached for 6 h in `NebulaGui/characters.json`) |
 | `Window:Close()` | Asks, then destroys |
 | `Window:ResetSize()` | Back to the device's start size and centered |
 | `Window:OpenPanel({ Title, Build })` / `ClosePanel()` | Side panel to the right of the window (inside it when there's no room) |
